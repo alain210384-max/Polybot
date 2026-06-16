@@ -656,15 +656,21 @@ function renderTrader(t) {
       <div class="mono" style="font-size:11px;font-weight:700;color:#00D97E">+${t.roi}%</div>
       <div style="font-size:9px;color:#64748B">ROI</div>
     </div>
-    <button onclick="toggleTrader('${t.wallet}')" style="background:${t.copiando?"#7C3AED":"#1A1C26"};border:1px solid ${t.copiando?"#7C3AED":"#1E2030"};border-radius:6px;padding:4px 8px;color:${t.copiando?"#fff":"#64748B"};font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">
+    <button onclick="toggleTrader('${t.wallet}',this)" style="background:${t.copiando?"#7C3AED":"#1A1C26"};border:1px solid ${t.copiando?"#7C3AED":"#1E2030"};border-radius:6px;padding:4px 8px;color:${t.copiando?"#fff":"#64748B"};font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">
       ${t.copiando?"✓ COPY":"COPY"}
     </button>
   </div>`;
 }
 
-async function toggleTrader(wallet) {
-  await fetch(`${API}/traders/${wallet}/toggle`, { method:"POST" });
-  fetchTraders();
+async function toggleTrader(wallet, btn) {
+  const activo = btn.textContent.includes("✓");
+  // Feedback inmediato
+  btn.textContent      = activo ? "COPY" : "✓ COPY";
+  btn.style.background = activo ? "#1A1C26" : "#7C3AED";
+  btn.style.borderColor= activo ? "#1E2030" : "#7C3AED";
+  btn.style.color      = activo ? "#64748B" : "#fff";
+  const d = await (await fetch(`${API}/traders/${wallet}/toggle`, { method:"POST" })).json();
+  showToast(d.copiando ? `✅ Copiando ${wallet.slice(0,8)}…` : `⏹ Dejaste de copiar ${wallet.slice(0,8)}…`, d.copiando ? "win" : "neutral");
 }
 
 // ── GRÁFICO ───────────────────────────────────────────────────────────────────
