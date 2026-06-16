@@ -17,7 +17,7 @@ app.get("/", (req, res) => {
 // ── CONFIG (valores fijos, sin depender del .env para filtros) ────────────────
 let CFG = {
   minOdds:      0.70,   // 70% mínimo - mercados serios
-  maxOdds:      0.92,   // hasta 92% (incluye sports live ganando)
+  maxOdds:      0.90,   // hasta 90% (decisión del trader: rango 70-90%)
   minLiquidity: 500,    // $500 mínimo
   minVolumen:   1000,   // $1k mínimo
   liveSportsBonus: true, // mercados deportivos en vivo al 80%+
