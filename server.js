@@ -114,27 +114,49 @@ const esDeporteEnVivo = (m, prob, diasRestantes) => {
 // ── COPY TRADING — LEADERBOARD Y MOTOR ───────────────────────────────────────
 const fetchLeaderboard = async () => {
   try {
-    const res = await axios.get(`${DATA_API}/leaderboard`, {
-      params: { limit: 10, window: "allTime" },
-      timeout: 10000,
-      headers: { "Accept": "application/json" },
+    const res = await axios.get("https://polymarket.com/leaderboard", {
+      timeout: 15000,
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
     });
-    const raw = Array.isArray(res.data) ? res.data : (res.data?.data || res.data?.leaderboard || []);
-    if (!raw.length) return [];
-    console.log(`🏆 Leaderboard: ${raw.length} traders`);
-    return raw.map((t, i) => ({
-      wallet:    t.address || t.proxyWallet || t.pseudonym || `0x${i}`,
-      alias:     t.name || t.pseudonym || (t.address ? t.address.slice(0,8) + "…" : `Trader${i+1}`),
-      winRate:   t.winRate ? Math.round(t.winRate * 100) : Math.min(95, 55 + Math.floor((t.pnl || 0) / 1000)),
-      roi:       t.roi ? Math.round(t.roi * 100) : (t.pnl ? Math.round(t.pnl / 5) : 0),
-      pnl:       parseFloat(t.pnl || 0).toFixed(2),
-      categoria: "MIXED",
-      activo:    "1h",
-      copiando:  copiandoSet.has(t.address || t.proxyWallet || ""),
-      score:     Math.min(99, 50 + Math.floor(i === 0 ? 45 : 40 - i * 3)),
-    }));
+
+    // Extraer __NEXT_DATA__ del HTML
+    const m = res.data.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (!m) throw new Error("__NEXT_DATA__ no encontrado");
+
+    const nextData = JSON.parse(m[1]);
+    const queries  = nextData?.props?.pageProps?.dehydratedState?.queries || [];
+    const lbQuery  = queries.find(q => Array.isArray(q?.state?.data) && q.state.data[0]?.proxyWallet);
+    const raw      = lbQuery?.state?.data || [];
+
+    if (!raw.length) throw new Error("Sin datos en leaderboard");
+
+    // Solo traders con PnL positivo, ordenados por PnL
+    const positivos = raw
+      .filter(t => t.pnl > 0)
+      .sort((a, b) => b.pnl - a.pnl)
+      .slice(0, 10);
+
+    console.log(`🏆 Leaderboard real: ${positivos.length} traders con PnL positivo`);
+
+    return positivos.map((t, i) => {
+      const roi     = t.volume > 0 ? parseFloat(((t.pnl / t.volume) * 100).toFixed(1)) : 0;
+      const score   = Math.min(99, 50 + Math.floor(t.pnl / 5000));
+      const winRate = Math.min(95, 60 + Math.floor(t.pnl / 10000));
+      return {
+        wallet:    t.proxyWallet,
+        alias:     t.pseudonym || t.name || t.proxyWallet.slice(0,8) + "…",
+        winRate,
+        roi,
+        pnl:       parseFloat(t.pnl.toFixed(2)),
+        volumen:   Math.round(t.volume),
+        categoria: "MIXED",
+        activo:    `rank #${t.rank}`,
+        copiando:  copiandoSet.has(t.proxyWallet),
+        score:     Math.max(50, score),
+      };
+    });
   } catch(e) {
-    console.log("⚠️ Leaderboard fallback (mock):", e.message);
+    console.log("⚠️ Leaderboard scraping falló, usando mock:", e.message);
     return [];
   }
 };
@@ -230,6 +252,15 @@ const copiarTrades = async () => {
 
 // Copy engine: cada 2 minutos
 setInterval(copiarTrades, 2 * 60 * 1000);
+
+// Refresh leaderboard real: cada hora
+setInterval(async () => {
+  console.log("🔄 Actualizando leaderboard...");
+  tradersCache = await fetchLeaderboard();
+}, 60 * 60 * 1000);
+
+// Cargar leaderboard al inicio
+fetchLeaderboard().then(t => { tradersCache = t; });
 
 // ── FETCH MERCADOS REALES ─────────────────────────────────────────────────────
 const fetchMercadosReales = async () => {
