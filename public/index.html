@@ -90,11 +90,13 @@
     <div id="modalTitulo" style="font-size:16px;font-weight:800;margin-bottom:6px;color:#E2E8F0"></div>
     <div id="modalMensaje" style="font-size:13px;color:#94A3B8;line-height:1.5;margin-bottom:16px"></div>
     <div id="modalInputWrap" style="margin-bottom:16px;display:none">
-      <div style="font-size:11px;color:#64748B;margin-bottom:6px">MONTO EN USD</div>
+      <div id="modalInputLabel" style="font-size:11px;color:#64748B;margin-bottom:6px">MONTO EN USD</div>
       <div style="position:relative">
-        <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#64748B;font-size:18px">$</span>
+        <span id="modalInputPrefix" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#64748B;font-size:18px">$</span>
         <input id="modalInput" class="modal-input" type="number" inputmode="decimal" step="0.5" min="0">
       </div>
+      <div id="modalQuickBtns" style="display:none;gap:6px;margin-top:8px"></div>
+      <div id="modalInputHelp" style="font-size:10px;color:#64748B;margin-top:6px"></div>
     </div>
     <div style="display:flex;gap:8px">
       <button id="modalCancel" class="btn-gray" style="flex:1;padding:12px">Cancelar</button>
@@ -878,7 +880,7 @@ async function fetchMisPosiciones() {
         </div>
         <div style="display:flex;gap:6px">
           <button onclick="comprarMas('${slugJS}','${p.titulo.replace(/'/g,"")}')" style="flex:1;padding:6px;border:none;border-radius:6px;background:#16261c;color:#00D97E;font-weight:700;cursor:pointer;font-size:11px">+ Comprar</button>
-          <button onclick="venderPos('${slugJS}','${p.titulo.replace(/'/g,"")}')" style="flex:1;padding:6px;border:none;border-radius:6px;background:#2a1518;color:#FF4560;font-weight:700;cursor:pointer;font-size:11px">Vender</button>
+          <button onclick="venderPos('${slugJS}','${p.titulo.replace(/'/g,"")}',${p.shares})" style="flex:1;padding:6px;border:none;border-radius:6px;background:#2a1518;color:#FF4560;font-weight:700;cursor:pointer;font-size:11px">Vender</button>
         </div>
       </div>`;
     }).join("");
@@ -905,7 +907,27 @@ function abrirModal(opts) {
     document.getElementById("modalTitulo").textContent = o.titulo || "";
     document.getElementById("modalMensaje").innerHTML = o.mensaje || "";
     document.getElementById("modalInputWrap").style.display = o.input ? "block" : "none";
+    document.getElementById("modalInputLabel").textContent = o.inputLabel || "MONTO EN USD";
+    const prefixEl = document.getElementById("modalInputPrefix");
+    prefixEl.textContent = o.inputPrefix != null ? o.inputPrefix : "$";
+    prefixEl.style.display = o.inputPrefix === "" ? "none" : "block";
+    inp.style.paddingLeft = o.inputPrefix === "" ? "14px" : "30px";
+    document.getElementById("modalInputHelp").textContent = o.inputHelp || "";
     if (o.input) inp.value = o.inputDefault != null ? o.inputDefault : "";
+
+    // Botones rápidos (porcentajes sobre un máximo) — opcional
+    const quick = document.getElementById("modalQuickBtns");
+    quick.innerHTML = ""; quick.style.display = "none";
+    if (o.input && o.quickMax) {
+      quick.style.display = "flex";
+      [["25%",0.25],["50%",0.5],["75%",0.75],["Todo",1]].forEach(([txt,frac]) => {
+        const b = document.createElement("button");
+        b.textContent = txt;
+        b.className = "btn-gray"; b.style.cssText = "flex:1;padding:6px;font-size:11px";
+        b.onclick = () => { inp.value = Math.max(1, Math.round(o.quickMax * frac)); inp.focus(); };
+        quick.appendChild(b);
+      });
+    }
 
     ok.textContent = o.confirmTxt || "Confirmar";
     ok.className = (o.confirmTipo === "red" ? "btn-red" : o.confirmTipo === "green" ? "btn-green" : "btn-purple");
@@ -949,20 +971,26 @@ async function comprarMas(slug, titulo) {
   } catch(e) { showToast("⚠️ Sin conexión", "neutral"); }
 }
 
-async function venderPos(slug, titulo) {
-  const ok = await abrirModal({
+async function venderPos(slug, titulo, sharesTotal) {
+  const total = parseInt(sharesTotal) || 0;
+  const val = await abrirModal({
     icono: "🔴", titulo: "Vender posición",
-    mensaje: `¿Vender toda tu posición de <b style="color:#E2E8F0">${titulo}</b> y sacar el dinero?`,
-    confirmTxt: "Vender", confirmTipo: "red",
+    mensaje: `¿Cuántos shares de <b style="color:#E2E8F0">${titulo}</b> quieres vender?`,
+    input: true, inputDefault: total, inputLabel: "SHARES A VENDER", inputPrefix: "",
+    inputHelp: `Tienes ${total} shares · usa los botones o escribe la cantidad`,
+    quickMax: total, confirmTxt: "Vender", confirmTipo: "red",
   });
-  if (!ok) return;
+  if (val === null) return;
+  const shares = parseInt(val);
+  if (!shares || shares <= 0) { showToast("Cantidad inválida", "neutral"); return; }
+  if (shares > total) { showToast(`Solo tienes ${total} shares`, "neutral"); return; }
   try {
-    const r = await fetch(`${API}/mis-posiciones/cerrar`, {
+    const r = await fetch(`${API}/mis-posiciones/vender`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slug }),
+      body: JSON.stringify({ slug, shares }),
     });
     const d = await r.json();
-    if (d.success) { showToast(`✅ Posición vendida`, "win"); fetchMisPosiciones(); }
+    if (d.success) { showToast(`✅ Vendiste ${d.vendido} shares`, "win"); fetchMisPosiciones(); }
     else showToast(`⚠️ ${d.error || "Error"}`, "neutral");
   } catch(e) { showToast("⚠️ Sin conexión", "neutral"); }
 }

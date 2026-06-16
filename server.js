@@ -128,6 +128,20 @@ async function pmComprar(marketSlug, probRef, quantity) {
 async function pmCerrar(marketSlug) {
   return pmUs.post("/v1/order/close-position", { marketSlug });
 }
+// Vender PARTE de una posición: SELL al bid (-1 tick) con ejecución inmediata
+async function pmVender(marketSlug, quantity) {
+  const b = await pmBbo(marketSlug);
+  let precio = b.bid ? Math.max(b.bid - 0.01, 0.01) : (b.last || 0.5);
+  precio = Math.round(precio * 100) / 100;
+  return pmUs.post("/v1/orders", {
+    marketSlug,
+    intent:   "ORDER_INTENT_SELL_LONG",
+    type:     "ORDER_TYPE_LIMIT",
+    price:    { value: precio.toFixed(2), currency: "USD" },
+    quantity: Math.max(1, Math.round(quantity)),
+    tif:      "TIME_IN_FORCE_IMMEDIATE_OR_CANCEL",
+  });
+}
 // Cancelar una orden límite pendiente
 async function pmCancelar(orderId, marketSlug) {
   return pmUs.post(`/v1/order/${orderId}/cancel`, { marketSlug });
@@ -821,7 +835,37 @@ app.post("/api/mis-posiciones/comprar", async (req, res) => {
   }
 });
 
-// Vender / cerrar una posición completa (sacar el dinero)
+// Vender una posición — completa o PARCIAL (sacar el dinero)
+app.post("/api/mis-posiciones/vender", async (req, res) => {
+  if (!modoReal) return res.status(400).json({ error: "Modo simulación" });
+  const { slug, shares } = req.body;
+  if (!slug) return res.status(400).json({ error: "Falta slug" });
+  try {
+    // Cuántos shares tiene la posición
+    const pos   = await pmUs.get("/v1/portfolio/positions");
+    const p     = (pos?.positions || {})[slug];
+    const total = p ? parseFloat(p.netPosition || 0) : 0;
+    if (total <= 0) return res.status(400).json({ error: "No tienes esa posición" });
+
+    const pedido = parseInt(shares) || total;
+    const vender = Math.min(pedido, total);
+
+    let r;
+    if (vender >= total) {
+      r = await pmCerrar(slug);                 // todo → close-position
+      console.log(`✅ Venta TOTAL: ${slug} (${total} sh)`);
+    } else {
+      r = await pmVender(slug, vender);          // parcial → SELL limit al bid
+      console.log(`✅ Venta PARCIAL: ${slug} ${vender}/${total} sh`);
+    }
+    setTimeout(actualizarBalanceReal, 2000);
+    res.json({ success: true, vendido: vender, total, order: r });
+  } catch(e) {
+    res.status(500).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
+// (compat) Cerrar posición completa
 app.post("/api/mis-posiciones/cerrar", async (req, res) => {
   if (!modoReal) return res.status(400).json({ error: "Modo simulación" });
   const { slug } = req.body;
