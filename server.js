@@ -118,35 +118,51 @@ let ultimaActividad  = {};        // { wallet: Set<tradeId> } — IDs ya procesa
 let tradersCache     = [];        // cache del leaderboard
 
 // ── CATEGORÍAS ────────────────────────────────────────────────────────────────
+// Nombres reales en Polymarket (verificados 2026-06-16):
+//   "What will S&P 500 (SPX) hit..." / "SPY (SPY) Up or Down..."
+//   "Nasdaq 100 (QQQ)..." / "Nasdaq 100 (NDX) Up or Down..."
+//   "Dow Jones (DJIA) Up or Down..." / "Russell 2000 (RUT) Up or Down..."
 const mapCategoria = (tags = [], question = "") => {
   const t = (tags.join(" ") + " " + question).toLowerCase();
-  // Futuros e índices (prioridad alta - tu especialidad)
-  if (t.includes("s&p")    || t.includes("spx")     || t.includes("sp500")    || 
-      t.includes("s&p 500") || t.includes("spy")     || t.includes("es future")) return "SPX";
-  if (t.includes("nasdaq") || t.includes("qqq")     || t.includes("nq")       || 
-      t.includes("nasdaq 100") || t.includes("ndx"))                             return "NQ";
-  if (t.includes("dow")    || t.includes("djia")    || t.includes("ym future")) return "DOW";
-  if (t.includes("vix")    || t.includes("volatility"))                          return "VIX";
-  // Deportes
-  if (t.includes("mlb")    || t.includes("baseball") || t.includes("yankees") || 
-      t.includes("dodgers") || t.includes("mets")    || t.includes("braves")  ||
-      t.includes("astros")  || t.includes("red sox") || t.includes("cubs"))    return "BEISBOL";
-  if (t.includes("nba")    || t.includes("lakers")   || t.includes("warriors") || 
-      t.includes("celtics") || t.includes("heat")    || t.includes("nuggets")) return "NBA";
-  if (t.includes("nfl")    || t.includes("chiefs")   || t.includes("cowboys")  || 
-      t.includes("eagles")  || t.includes("patriots"))                          return "NFL";
-  if (t.includes("ufc")    || t.includes("mma")      || t.includes("boxing"))  return "UFC";
-  if (t.includes("soccer") || t.includes("madrid")   || t.includes("barcelona") || 
-      t.includes("premier") || t.includes("champions"))                         return "SOCCER";
-  if (t.includes("sport"))  return "SPORTS";
-  // Crypto
-  if (t.includes("bitcoin") || t.includes("btc")    || t.includes("eth")      || 
-      t.includes("solana")   || t.includes("crypto") || t.includes("ethereum")) return "CRYPTO";
-  // Macro y política
-  if (t.includes("fed")    || t.includes("rate")    || t.includes("inflation") || 
-      t.includes("gdp")     || t.includes("cpi")    || t.includes("recession")) return "MACRO";
-  if (t.includes("elect")  || t.includes("presid")  || t.includes("trump")    || 
-      t.includes("congress")|| t.includes("senate")  || t.includes("house"))   return "POLITICA";
+
+  // hasW: ticker como PALABRA completa (evita "down"→dow, "method"→eth, "inquiry"→nq)
+  const hasW = (...words) => words.some(w =>
+    new RegExp(`(^|[^a-z0-9])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`).test(t)
+  );
+
+  // ── Índices y futuros de bolsa (prioridad alta - especialidad del trader) ──
+  if (t.includes("s&p 500") || t.includes("s&p500") || t.includes("sp500") ||
+      hasW("s&p", "spx", "spy", "es"))                         return "SPX";
+  if (t.includes("nasdaq")  ||
+      hasW("qqq", "ndx", "nq"))                                return "NQ";
+  if (t.includes("dow jones") ||
+      hasW("djia", "ym"))                                      return "DOW";
+  if (t.includes("russell") ||
+      hasW("rut"))                                             return "RUSSELL";
+  if (hasW("vix") || t.includes("volatility index"))          return "VIX";
+
+  // ── Deportes ──
+  if (hasW("mlb", "baseball", "yankees", "dodgers", "mets", "braves", "astros", "cubs") ||
+      t.includes("red sox"))                                   return "BEISBOL";
+  if (hasW("nba", "lakers", "warriors", "celtics", "nuggets") ||
+      t.includes("miami heat"))                                return "NBA";
+  if (hasW("nfl", "chiefs", "cowboys", "eagles", "patriots"))  return "NFL";
+  if (hasW("ufc", "mma") || t.includes("boxing"))              return "UFC";
+  if (t.includes("soccer") || t.includes("premier league") || t.includes("champions league") ||
+      hasW("madrid", "barcelona"))                             return "SOCCER";
+  if (t.includes("sport"))                                     return "SPORTS";
+
+  // ── Crypto ──
+  if (t.includes("bitcoin") || t.includes("ethereum") || t.includes("solana") ||
+      t.includes("crypto")  || hasW("btc", "eth", "sol", "xrp")) return "CRYPTO";
+
+  // ── Macro y política ──
+  if (t.includes("inflation") || t.includes("recession") || t.includes("interest rate") ||
+      hasW("fed", "gdp", "cpi", "fomc"))                       return "MACRO";
+  if (t.includes("elect") || t.includes("presid") || t.includes("congress") ||
+      t.includes("senate") || t.includes("government") || t.includes("shutdown") ||
+      t.includes("shut down") || hasW("trump", "house"))        return "POLITICA";
+
   return "WILDCARD";
 };
 
