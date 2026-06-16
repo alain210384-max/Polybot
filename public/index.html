@@ -124,9 +124,13 @@
 
 <!-- STATS STRIP -->
 <div style="padding:12px 20px;display:flex;gap:8px;overflow-x:auto" id="statsStrip">
-  <div class="stat-card" style="flex:1;min-width:110px">
-    <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Balance</div>
+  <div class="stat-card" style="flex:1;min-width:130px">
+    <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Balance Total</div>
     <div class="mono" id="statBalance" style="font-size:18px;font-weight:800">$0.00</div>
+    <div style="display:flex;gap:8px;font-size:9px;margin-top:4px;color:#64748B">
+      <span>💵 <span class="mono" id="statCash" style="color:#00D97E">$0</span></span>
+      <span>🎯 <span class="mono" id="statEnPos" style="color:#9D5CF6">$0</span></span>
+    </div>
   </div>
   <div class="stat-card" style="flex:1;min-width:110px">
     <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">P&L Hoy</div>
@@ -466,6 +470,10 @@ function updateUI() {
   document.getElementById("navPnl").textContent      = `${signPN(pnl)}$${fmt(Math.abs(pnl))} hoy`;
   document.getElementById("navPnl").style.color      = colorPN(pnl);
   document.getElementById("statBalance").textContent = `$${fmt(balance)}`;
+  if (estado.balanceCash != null && document.getElementById("statCash"))
+    document.getElementById("statCash").textContent = `$${fmt(estado.balanceCash)}`;
+  if (estado.balanceEnPos != null && document.getElementById("statEnPos"))
+    document.getElementById("statEnPos").textContent = `$${fmt(estado.balanceEnPos)}`;
   document.getElementById("statPnl").textContent     = `${signPN(pnl)}$${fmt(Math.abs(pnl))}`;
   document.getElementById("statPnl").style.color     = colorPN(pnl);
   document.getElementById("statWR").textContent      = `${wr}%`;
