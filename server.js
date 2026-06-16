@@ -89,6 +89,23 @@ if (modoReal) {
   console.log("⚠️  Sin credenciales — MODO SIMULACIÓN");
 }
 
+// ── HELPERS DE ÓRDENES (formato correcto de polymarket.us) ────────────────────
+// El API espera intent/quantity/price{value,currency}, NO side/size.
+async function pmComprar(marketSlug, prob, quantity) {
+  return pmUs.post("/v1/orders", {
+    marketSlug,
+    intent:   "ORDER_INTENT_BUY_LONG",
+    type:     "ORDER_TYPE_LIMIT",
+    price:    { value: prob.toFixed(2), currency: "USD" },
+    quantity: Math.max(1, Math.round(quantity)),
+    tif:      "TIME_IN_FORCE_GOOD_TILL_CANCEL",
+  });
+}
+// Cerrar posición completa de un mercado (para copiar las ventas del trader)
+async function pmCerrar(marketSlug) {
+  return pmUs.post("/v1/order/close-position", { marketSlug });
+}
+
 // CLOB client (solo para leer mercados públicos)
 let clobClient = null;
 try {
@@ -281,12 +298,7 @@ const ejecutarCopyTrade = async (actividad, wallet) => {
 
   if (modoReal && slug) {
     try {
-      await pmUs.post("/v1/orders", {
-        marketSlug: slug,
-        side:       "BUY",
-        price:      parseFloat(prob.toFixed(2)),
-        size:       parseFloat(CFG.stake.toFixed(2)),
-      });
+      await pmComprar(slug, prob, shares);
       console.log(`✅ COPY TRADE ejecutado: ${title} @ ${(prob*100).toFixed(0)}%`);
     } catch(e) {
       console.log(`⚠️ Error copy trade: ${e.response?.data?.message || e.message}`);
@@ -310,6 +322,40 @@ const ejecutarCopyTrade = async (actividad, wallet) => {
   console.log(`📋 COPY registrado: ${trade.titulo}`);
 };
 
+// El trader vendió → cerrar NUESTRA posición copiada de ese mismo mercado
+const cerrarCopyTrade = async (actividad, wallet) => {
+  const slug = actividad.market?.slug || actividad.slug;
+  if (!slug) return;
+
+  // Buscar la posición que copiamos de ESTE trader en ESTE mercado
+  const idx = posicionesAbiertas.findIndex(p =>
+    p.slug === slug && (p.titulo || "").includes(`COPY ${wallet.slice(0,6)}`));
+  if (idx === -1) return; // no tenemos posición copiada ahí, nada que cerrar
+
+  const pos = posicionesAbiertas[idx];
+
+  if (modoReal) {
+    try {
+      await pmCerrar(slug);
+      console.log(`✅ COPY SALIDA: ${pos.titulo} (el trader vendió)`);
+    } catch(e) {
+      console.log(`⚠️ Error cerrando copy: ${e.response?.data?.message || e.message}`);
+    }
+  }
+
+  // Actualizar estado local: P&L según precio de salida del trader
+  const probSalida = parseFloat(actividad.price || actividad.avgPrice || pos.oddsActual || pos.oddsEntrada);
+  const pnl = parseFloat(((probSalida - pos.oddsEntrada) * pos.shares).toFixed(2));
+  pos.estado = "cerrado_copy"; pos.pnl = pnl; pos.oddsActual = probSalida;
+  pnlHoy = parseFloat((pnlHoy + pnl).toFixed(2));
+  balanceReal = parseFloat((balanceReal + pnl).toFixed(2));
+  if (pnl >= 0) ganados++; else perdidos++;
+  presupuestoUsado = parseFloat(Math.max(0, presupuestoUsado - pos.stake).toFixed(2));
+  historialTrades.unshift({ ...pos, cerradaEn: new Date().toISOString() });
+  posicionesAbiertas.splice(idx, 1);
+  console.log(`📋 COPY cerrado: ${pos.titulo} | PnL $${pnl}`);
+};
+
 const copiarTrades = async () => {
   if (!botActivo || copiandoSet.size === 0) return;
   console.log(`🔁 Verificando actividad de ${copiandoSet.size} traders copiados...`);
@@ -326,16 +372,21 @@ const copiarTrades = async () => {
     }
 
     const vistas = ultimaActividad[wallet];
+    // Procesar TODAS las actividades nuevas (compras Y ventas), en orden cronológico
     const nuevas = actividades.filter(a => {
       const id = a.id || a.hash || a.transactionHash;
-      return id && !vistas.has(id) && (a.side === "BUY" || a.type === "BUY" || a.outcome === "YES");
+      return id && !vistas.has(id);
     });
 
     for (const act of nuevas) {
       const id = act.id || act.hash || act.transactionHash;
       vistas.add(id);
-      console.log(`🆕 Nueva actividad de ${wallet.slice(0,8)}: ${act.market?.question?.slice(0,40) || id}`);
-      await ejecutarCopyTrade(act, wallet);
+      const lado = (act.side || act.type || "").toUpperCase();
+      const esCompra = lado === "BUY" || act.outcome === "YES";
+      const esVenta  = lado === "SELL";
+      console.log(`🆕 ${wallet.slice(0,8)} ${lado || "?"}: ${act.market?.question?.slice(0,38) || id}`);
+      if (esCompra)      await ejecutarCopyTrade(act, wallet);
+      else if (esVenta)  await cerrarCopyTrade(act, wallet);
     }
   }
 };
@@ -502,12 +553,7 @@ const ejecutarTrade = async (mercado, stake, fuerza) => {
   if (modoReal && mercado.slug) {
     try {
       console.log(`🔄 Ejecutando orden REAL: ${mercado.titulo} — $${stake} @ ${(mercado.prob*100).toFixed(0)}%`);
-      const orderResp = await pmUs.post("/v1/orders", {
-        marketSlug: mercado.slug,
-        side:       "BUY",
-        price:      parseFloat(mercado.prob.toFixed(2)),
-        size:       parseFloat(stake.toFixed(2)),
-      });
+      const orderResp = await pmComprar(mercado.slug, mercado.prob, shares);
       console.log(`✅ ORDEN REAL: ${JSON.stringify(orderResp).slice(0,120)}`);
     } catch(e) {
       console.log(`⚠️ Error orden real: ${e.response?.data?.message || e.message}`);
