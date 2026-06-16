@@ -367,8 +367,8 @@ let tabActual = "senales";
 let botOn = true;
 const balanceInicial = parseFloat(localStorage.getItem("balanceInicial") || "59");
 
-const CATS = { SPX: "#00D97E", NQ: "#3B82F6", DOW: "#6366F1", VIX: "#EC4899", CRYPTO: "#9D5CF6", BEISBOL: "#10B981", NBA: "#F97316", NFL: "#8B5CF6", SOCCER: "#06B6D4", SPORTS: "#00D97E", UFC: "#F59E0B", MACRO: "#38BDF8", POLITICA: "#EF4444", WILDCARD: "#64748B" };
-const categoriasActivas = { SPX: true, NQ: true, DOW: true, VIX: false, CRYPTO: true, BEISBOL: true, NBA: true, NFL: true, SOCCER: true, SPORTS: true, UFC: true, MACRO: true, POLITICA: true };
+const CATS = { SPX: "#00D97E", NQ: "#3B82F6", DOW: "#6366F1", RUSSELL: "#818CF8", VIX: "#EC4899", CRYPTO: "#9D5CF6", BEISBOL: "#10B981", NBA: "#F97316", NFL: "#8B5CF6", NHL: "#0EA5E9", SOCCER: "#06B6D4", TENIS: "#84CC16", GOLF: "#22C55E", F1: "#DC2626", SPORTS: "#00D97E", UFC: "#F59E0B", MACRO: "#38BDF8", POLITICA: "#EF4444", WILDCARD: "#64748B" };
+const categoriasActivas = { SPX: true, NQ: true, DOW: true, RUSSELL: true, VIX: false, CRYPTO: true, BEISBOL: true, NBA: true, NFL: true, NHL: true, SOCCER: true, TENIS: true, GOLF: true, F1: true, SPORTS: true, UFC: true, MACRO: true, POLITICA: true };
 
 // ── UTILIDADES ────────────────────────────────────────────────────────────────
 const fmt  = n => parseFloat(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -466,9 +466,10 @@ function updateUI() {
   // Circuit breaker
   document.getElementById("circuitAlert").style.display = estado.circuitBreaker ? "block" : "none";
 
-  // ROI y ganancia
-  const gananciaTotal = balance - balanceInicial;
-  const roi = balanceInicial > 0 ? (gananciaTotal / balanceInicial * 100).toFixed(1) : 0;
+  // ROI y ganancia — base = presupuesto REAL del backend (no el localStorage viejo)
+  const base = estado.presupuestoTotal || balanceInicial;
+  const gananciaTotal = balance - base;
+  const roi = base > 0 ? (gananciaTotal / base * 100).toFixed(1) : 0;
   if (document.getElementById("gananciaTotal")) {
     document.getElementById("gananciaTotal").textContent = `${signPN(gananciaTotal)}$${fmt(Math.abs(gananciaTotal))}`;
     document.getElementById("gananciaTotal").style.color = colorPN(gananciaTotal);
