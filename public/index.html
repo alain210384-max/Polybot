@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POLYBOT — Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { background: #08090E; color: #E2E8F0; font-family: 'Inter', sans-serif; margin: 0; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .card { background: #111318; border: 1px solid #1E2030; border-radius: 14px; padding: 16px; }
+  .card-dark { background: #1A1C26; border: 1px solid #1E2030; border-radius: 12px; padding: 14px; }
+  .btn-purple { background: linear-gradient(135deg, #7C3AED, #9D5CF6); border: none; border-radius: 8px; padding: 8px 16px; color: #fff; font-weight: 700; cursor: pointer; font-size: 13px; }
+  .btn-gray { background: #1A1C26; border: 1px solid #1E2030; border-radius: 8px; padding: 8px 16px; color: #64748B; font-weight: 600; cursor: pointer; font-size: 13px; }
+  .btn-red { background: #FF456022; border: 1px solid #FF4560; border-radius: 8px; padding: 8px 16px; color: #FF4560; font-weight: 700; cursor: pointer; font-size: 13px; }
+  .btn-green { background: #00D97E22; border: 1px solid #00D97E; border-radius: 8px; padding: 8px 16px; color: #00D97E; font-weight: 700; cursor: pointer; font-size: 13px; }
+  .blink { animation: blink 1.5s infinite; }
+  .pulse-ring { animation: pulseRing 2s ease-out infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+  @keyframes pulseRing { 0%{transform:scale(0.8);opacity:0.8} 100%{transform:scale(2);opacity:0} }
+  @keyframes slideIn { from{transform:translateX(20px);opacity:0} to{transform:translateX(0);opacity:1} }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  .slide-in { animation: slideIn 0.3s ease; }
+  .fade-in { animation: fadeIn 0.3s ease; }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-thumb { background: #1E2030; border-radius: 2px; }
+
+  /* MOBILE */
+  .mobile-nav { display: none; }
+  .desktop-grid { display: grid; grid-template-columns: 260px 1fr 280px; gap: 16px; padding: 16px; }
+  @media (max-width: 768px) {
+    .desktop-grid { display: block; padding: 10px; padding-bottom: 75px; }
+    .col-left { display: none; }
+    .col-right { display: none; }
+    .mobile-nav { display: flex; }
+    .mobile-section { display: none; }
+    .mobile-section.active { display: block; animation: fadeIn 0.2s ease; }
+  }
+
+  .toggle-switch { width: 44px; height: 24px; border-radius: 12px; position: relative; cursor: pointer; transition: background 0.2s; }
+  .toggle-knob { width: 18px; height: 18px; background: #fff; border-radius: 50%; position: absolute; top: 3px; transition: left 0.2s; }
+
+  .cat-badge { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 6px; letter-spacing: 1px; }
+  .strength-badge { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+
+  input[type=range] { accent-color: #7C3AED; width: 100%; }
+  .stat-card { background: #111318; border: 1px solid #1E2030; border-radius: 12px; padding: 12px 14px; }
+
+  .toast { position: fixed; top: 65px; right: 16px; z-index: 1000; padding: 10px 16px; border-radius: 10px; font-size: 13px; font-weight: 600; animation: slideIn 0.3s ease; backdrop-filter: blur(8px); }
+  .pulse-overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 999; }
+</style>
+</head>
+<body>
+
+<!-- PULSE OVERLAY -->
+<div id="pulseOverlay" class="pulse-overlay" style="display:none">
+  <div style="position:absolute;width:160px;height:160px;border-radius:50%;border:2px solid #7C3AED;animation:pulseRing 1.5s ease-out forwards"></div>
+  <div style="position:absolute;width:240px;height:240px;border-radius:50%;border:1px solid #9D5CF6;animation:pulseRing 1.5s ease-out 0.3s forwards;opacity:0.5"></div>
+</div>
+
+<!-- TOAST -->
+<div id="toast" class="toast" style="display:none"></div>
+
+<!-- TOP NAV -->
+<div style="background:#111318;border-bottom:1px solid #1E2030;padding:0 20px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100">
+  <div style="display:flex;align-items:center;gap:10px">
+    <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#7C3AED,#9D5CF6);display:flex;align-items:center;justify-content:center;font-size:18px">⬡</div>
+    <div>
+      <div style="font-size:14px;font-weight:800;letter-spacing:1px">POLYBOT</div>
+      <div style="font-size:9px;color:#64748B;letter-spacing:1.5px">MOTOR DE PREDICCIONES</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:20px">
+    <div style="display:flex;align-items:center;gap:6px">
+      <div id="statusDot" style="width:8px;height:8px;border-radius:50%;background:#00D97E" class="blink"></div>
+      <span id="statusLabel" style="font-size:11px;color:#00D97E;font-weight:700">EN VIVO</span>
+    </div>
+    <div class="mono" id="navBalance" style="font-size:18px;font-weight:700">$0.00</div>
+    <div id="navPnl" style="font-size:12px;font-weight:700;color:#00D97E" class="mono">+$0.00 hoy</div>
+  </div>
+</div>
+
+<!-- STATS STRIP -->
+<div style="padding:12px 20px;display:flex;gap:8px;overflow-x:auto" id="statsStrip">
+  <div class="stat-card" style="flex:1;min-width:110px">
+    <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Balance</div>
+    <div class="mono" id="statBalance" style="font-size:18px;font-weight:800">$0.00</div>
+  </div>
+  <div class="stat-card" style="flex:1;min-width:110px">
+    <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">P&L Hoy</div>
+    <div class="mono" id="statPnl" style="font-size:18px;font-weight:800;color:#00D97E">+$0.00</div>
+  </div>
+  <div class="stat-card" style="flex:1;min-width:110px">
+    <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Win Rate</div>
+    <div class="mono" id="statWR" style="font-size:18px;font-weight:800;color:#00D97E">0%</div>
+  </div>
+  <div class="stat-card" style="flex:1;min-width:110px">
+    <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Trades</div>
+    <div class="mono" id="statTrades" style="font-size:18px;font-weight:800">0</div>
+    <div style="font-size:10px;color:#64748B;margin-top:2px"><span id="statGanados" style="color:#00D97E">0✅</span> <span id="statPerdidos" style="color:#FF4560">0❌</span></div>
+  </div>
+  <div class="stat-card" style="flex:1;min-width:110px">
+    <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Presupuesto</div>
+    <div id="budgetBar" style="background:#1E2030;border-radius:4px;height:6px;margin:6px 0">
+      <div id="budgetFill" style="background:linear-gradient(90deg,#7C3AED,#9D5CF6);height:100%;border-radius:4px;width:0%;transition:width 0.5s"></div>
+    </div>
+    <div style="font-size:11px"><span id="statUsado" class="mono">$0</span><span style="color:#64748B"> / </span><span id="statTotal" class="mono">$0</span></div>
+  </div>
+</div>
+
+<!-- MAIN GRID -->
+<div class="desktop-grid">
+
+  <!-- COLUMNA IZQUIERDA — Config Bot -->
+  <div class="col-left">
+    <div class="card">
+      <div style="font-size:11px;font-weight:700;color:#64748B;letter-spacing:1px;margin-bottom:16px">⚙️ CONFIGURACIÓN</div>
+
+      <!-- Bot ON/OFF -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div>
+          <div style="font-size:14px;font-weight:600">Auto Trade</div>
+          <div style="font-size:11px;color:#64748B">Ejecución automática</div>
+        </div>
+        <div id="botToggle" class="toggle-switch" style="background:#7C3AED" onclick="toggleBot()">
+          <div id="botKnob" class="toggle-knob" style="left:23px"></div>
+        </div>
+      </div>
+
+      <!-- Circuit Breaker Alert -->
+      <div id="circuitAlert" style="display:none;background:#FF456022;border:1px solid #FF4560;border-radius:10px;padding:12px;margin-bottom:16px;text-align:center">
+        <div style="font-size:12px;font-weight:700;color:#FF4560">🚨 CIRCUIT BREAKER</div>
+        <div style="font-size:11px;color:#64748B;margin:4px 0">5 pérdidas seguidas</div>
+        <button class="btn-red" onclick="resetCircuit()" style="margin-top:8px;width:100%">Reiniciar</button>
+      </div>
+
+      <!-- Presupuesto -->
+      <div style="margin-bottom:20px">
+        <div style="font-size:11px;color:#64748B;letter-spacing:1px;margin-bottom:10px">PRESUPUESTO DIARIO</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px">
+          <button class="btn-gray" onclick="setPresupuesto(25)">$25</button>
+          <button class="btn-gray" onclick="setPresupuesto(59)">$59</button>
+          <button class="btn-gray" onclick="setPresupuesto(100)">$100</button>
+          <button class="btn-gray" onclick="setPresupuesto(500)">$500</button>
+        </div>
+        <div style="font-size:11px;color:#64748B;margin-bottom:6px">Personalizado</div>
+        <div style="display:flex;gap:8px">
+          <input id="customPresupuesto" type="number" placeholder="$" style="flex:1;background:#1A1C26;border:1px solid #1E2030;border-radius:8px;padding:8px;color:#E2E8F0;font-size:13px">
+          <button class="btn-purple" onclick="setPresupuestoCustom()">OK</button>
+        </div>
+      </div>
+
+      <!-- Stake por trade -->
+      <div style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:12px;color:#64748B">Stake por Trade</span>
+          <span id="stakeVal" style="font-size:13px;font-weight:700;color:#9D5CF6" class="mono">$3</span>
+        </div>
+        <input type="range" min="1" max="100" value="3" id="stakeSlider" oninput="updateStake(this.value)">
+      </div>
+
+      <!-- Min Odds -->
+      <div style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:12px;color:#64748B">Mínimo de Odds</span>
+          <span id="oddsVal" style="font-size:13px;font-weight:700;color:#9D5CF6" class="mono">70%</span>
+        </div>
+        <input type="range" min="60" max="90" value="70" id="oddsSlider" oninput="updateOdds(this.value)">
+      </div>
+
+      <!-- Kelly Indicator -->
+      <div class="card-dark" style="text-align:center;margin-bottom:16px">
+        <div style="font-size:10px;color:#64748B;letter-spacing:1px;margin-bottom:4px">KELLY 2.5% RECOMENDADO</div>
+        <div id="kellyVal" class="mono" style="font-size:22px;font-weight:800;color:#7C3AED">$0.00</div>
+        <div style="font-size:10px;color:#64748B;margin-top:2px">por trade óptimo</div>
+      </div>
+
+      <!-- Categorías -->
+      <div style="font-size:11px;color:#64748B;letter-spacing:1px;margin-bottom:10px">CATEGORÍAS</div>
+      <div id="categorias">
+        <!-- Generado por JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- COLUMNA CENTRO -->
+  <div>
+    <!-- SEÑALES EN VIVO -->
+    <div style="margin-bottom:16px">
+      <div class="mobile-section active" id="seccionSenales">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <span style="font-size:14px;font-weight:700">⚡ Señales en Vivo</span>
+          <span id="badgeSenales" style="background:#7C3AED33;color:#9D5CF6;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:700">0 LISTAS</span>
+        </div>
+        <div id="senalesList" style="max-height:380px;overflow-y:auto"></div>
+      </div>
+    </div>
+
+    <!-- POSICIONES ABIERTAS -->
+    <div class="mobile-section" id="seccionPosiciones">
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <span style="font-size:14px;font-weight:700">📊 Posiciones Abiertas</span>
+          <span id="unrealPnl" class="mono" style="font-size:14px;font-weight:700;color:#9D5CF6">$0.00</span>
+        </div>
+        <div id="posicionesList" style="max-height:280px;overflow-y:auto">
+          <div style="text-align:center;color:#64748B;padding:30px">Sin posiciones abiertas</div>
+        </div>
+      </div>
+
+      <!-- HISTORIAL -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <span style="font-size:14px;font-weight:700">📋 Historial de Hoy</span>
+          <span id="historialCount" style="font-size:11px;color:#64748B">0 trades</span>
+        </div>
+        <div id="historialList" style="max-height:250px;overflow-y:auto">
+          <div style="text-align:center;color:#64748B;padding:30px">Sin trades hoy</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GRÁFICO -->
+    <div class="mobile-section" id="seccionGrafico">
+      <div class="card" style="margin-bottom:16px">
+        <div style="font-size:14px;font-weight:700;margin-bottom:16px">📈 Balance Histórico</div>
+        <canvas id="balanceChart" height="160"></canvas>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="card" style="text-align:center">
+          <div style="font-size:11px;color:#64748B;margin-bottom:4px">GANANCIA TOTAL</div>
+          <div id="gananciaTotal" class="mono" style="font-size:20px;font-weight:800;color:#00D97E">+$0.00</div>
+        </div>
+        <div class="card" style="text-align:center">
+          <div style="font-size:11px;color:#64748B;margin-bottom:4px">ROI</div>
+          <div id="roiTotal" class="mono" style="font-size:20px;font-weight:800;color:#00D97E">0.0%</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COLUMNA DERECHA -->
+  <div class="col-right" style="display:flex;flex-direction:column;gap:16px">
+
+    <!-- TOP TRADERS -->
+    <div class="card">
+      <div style="font-size:14px;font-weight:700;margin-bottom:12px">🏆 Top Traders</div>
+      <div id="tradersList"></div>
+    </div>
+
+    <!-- WHALE CONSENSUS -->
+    <div class="card-dark" style="border:1px solid #1E2030;border-radius:14px;padding:16px">
+      <div style="font-size:11px;font-weight:700;color:#64748B;letter-spacing:1px;margin-bottom:12px">🐋 CONSENSO WHALE</div>
+      <div id="whaleList"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- TRADERS (mobile) -->
+<div class="mobile-section" id="seccionTraders" style="padding:0 12px 12px">
+  <div class="card" style="margin-bottom:12px">
+    <div style="font-size:14px;font-weight:700;margin-bottom:12px">🏆 Top Traders</div>
+    <div id="tradersListMobile"></div>
+  </div>
+  <div class="card-dark" style="border:1px solid #1E2030;border-radius:14px;padding:16px">
+    <div style="font-size:11px;font-weight:700;color:#64748B;letter-spacing:1px;margin-bottom:12px">🐋 CONSENSO WHALE</div>
+    <div id="whaleListMobile"></div>
+  </div>
+</div>
+
+<!-- BOT CONFIG (mobile) -->
+<div class="mobile-section" id="seccionBot" style="padding:0 12px 12px">
+  <div class="card">
+    <div style="font-size:14px;font-weight:700;margin-bottom:16px">⚙️ Configuración del Bot</div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #1E2030">
+      <span style="font-size:14px;font-weight:600">Auto Trade</span>
+      <div id="botToggleMobile" class="toggle-switch" style="background:#7C3AED" onclick="toggleBot()">
+        <div id="botKnobMobile" class="toggle-knob" style="left:23px"></div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:20px">
+      <div style="font-size:12px;color:#64748B;margin-bottom:10px">PRESUPUESTO RÁPIDO</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button class="btn-gray" onclick="setPresupuesto(25)" style="padding:12px">$25</button>
+        <button class="btn-gray" onclick="setPresupuesto(59)" style="padding:12px">$59</button>
+        <button class="btn-gray" onclick="setPresupuesto(100)" style="padding:12px">$100</button>
+        <button class="btn-gray" onclick="setPresupuesto(500)" style="padding:12px">$500</button>
+      </div>
+    </div>
+
+    <div style="margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:13px">Stake por Trade</span>
+        <span id="stakeValM" class="mono" style="font-weight:700;color:#9D5CF6">$3</span>
+      </div>
+      <input type="range" min="1" max="100" value="3" oninput="updateStake(this.value)">
+    </div>
+
+    <div style="margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:13px">Mínimo de Odds</span>
+        <span id="oddsValM" class="mono" style="font-weight:700;color:#9D5CF6">70%</span>
+      </div>
+      <input type="range" min="60" max="90" value="70" oninput="updateOdds(this.value)">
+    </div>
+
+    <div class="card-dark" style="text-align:center">
+      <div style="font-size:10px;color:#64748B;margin-bottom:4px">KELLY RECOMENDADO</div>
+      <div id="kellyValM" class="mono" style="font-size:24px;font-weight:800;color:#7C3AED">$0.00</div>
+      <div style="font-size:11px;color:#64748B;margin-top:2px">2.5% del saldo</div>
+    </div>
+  </div>
+</div>
+
+<!-- MOBILE BOTTOM NAV -->
+<div class="mobile-nav" style="position:fixed;bottom:0;left:0;right:0;background:#111318;border-top:1px solid #1E2030;height:65px;align-items:center;justify-content:space-around;z-index:200">
+  <div onclick="setTab('senales')"   class="nav-tab" data-tab="senales"   style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;flex:1;padding-bottom:4px">
+    <div style="font-size:22px">⚡</div>
+    <div style="font-size:9px;font-weight:700;letter-spacing:0.5px;color:#9D5CF6">Señales</div>
+    <div class="nav-dot" style="width:16px;height:2px;border-radius:1px;background:#7C3AED"></div>
+  </div>
+  <div onclick="setTab('posiciones')" class="nav-tab" data-tab="posiciones" style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;flex:1;padding-bottom:4px">
+    <div style="font-size:22px">📊</div>
+    <div style="font-size:9px;font-weight:700;letter-spacing:0.5px;color:#64748B">Portfolio</div>
+    <div style="width:16px;height:2px;border-radius:1px"></div>
+  </div>
+  <div onclick="setTab('grafico')"   class="nav-tab" data-tab="grafico"   style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;flex:1;padding-bottom:4px">
+    <div style="font-size:22px">📈</div>
+    <div style="font-size:9px;font-weight:700;letter-spacing:0.5px;color:#64748B">Gráfico</div>
+    <div style="width:16px;height:2px;border-radius:1px"></div>
+  </div>
+  <div onclick="setTab('traders')"   class="nav-tab" data-tab="traders"   style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;flex:1;padding-bottom:4px">
+    <div style="font-size:22px">🏆</div>
+    <div style="font-size:9px;font-weight:700;letter-spacing:0.5px;color:#64748B">Traders</div>
+    <div style="width:16px;height:2px;border-radius:1px"></div>
+  </div>
+  <div onclick="setTab('bot')"       class="nav-tab" data-tab="bot"       style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;flex:1;padding-bottom:4px">
+    <div style="font-size:22px">⚙️</div>
+    <div style="font-size:9px;font-weight:700;letter-spacing:0.5px;color:#64748B">Bot</div>
+    <div style="width:16px;height:2px;border-radius:1px"></div>
+  </div>
+</div>
+
+<script>
+const API = "http://localhost:3002/api";
+let estado = {};
+let chartInstance = null;
+let tabActual = "senales";
+let botOn = true;
+const balanceInicial = parseFloat(localStorage.getItem("balanceInicial") || "59");
+
+const CATS = { SPX: "#00D97E", NQ: "#3B82F6", DOW: "#6366F1", VIX: "#EC4899", CRYPTO: "#9D5CF6", BEISBOL: "#10B981", NBA: "#F97316", NFL: "#8B5CF6", SOCCER: "#06B6D4", SPORTS: "#00D97E", UFC: "#F59E0B", MACRO: "#38BDF8", POLITICA: "#EF4444", WILDCARD: "#64748B" };
+const categoriasActivas = { SPX: true, NQ: true, DOW: true, VIX: false, CRYPTO: true, BEISBOL: true, NBA: true, NFL: true, SOCCER: true, SPORTS: true, UFC: true, MACRO: true, POLITICA: true };
+
+// ── UTILIDADES ────────────────────────────────────────────────────────────────
+const fmt  = n => parseFloat(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtK = n => n >= 1000 ? `${(n/1000).toFixed(0)}k` : n;
+const colorPN = n => parseFloat(n) >= 0 ? "#00D97E" : "#FF4560";
+const signPN  = n => parseFloat(n) >= 0 ? "+" : "";
+
+function showToast(msg, tipo) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.style.display = "block";
+  t.style.background = tipo === "win" ? "#00D97E22" : tipo === "loss" ? "#FF456022" : "#1A1C26";
+  t.style.border = `1px solid ${tipo === "win" ? "#00D97E" : tipo === "loss" ? "#FF4560" : "#1E2030"}`;
+  t.style.color = "#E2E8F0";
+  setTimeout(() => t.style.display = "none", 3000);
+}
+
+function showPulse() {
+  const p = document.getElementById("pulseOverlay");
+  p.style.display = "flex";
+  setTimeout(() => p.style.display = "none", 2000);
+}
+
+// ── TABS MOBILE ───────────────────────────────────────────────────────────────
+function setTab(tab) {
+  tabActual = tab;
+  const secciones = { senales:"seccionSenales", posiciones:"seccionPosiciones", grafico:"seccionGrafico", traders:"seccionTraders", bot:"seccionBot" };
+  Object.entries(secciones).forEach(([k, id]) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle("active", k === tab);
+  });
+  document.querySelectorAll(".nav-tab").forEach(el => {
+    const isActive = el.dataset.tab === tab;
+    el.querySelector("div:nth-child(2)").style.color = isActive ? "#9D5CF6" : "#64748B";
+    el.querySelector("div:nth-child(3)").style.background = isActive ? "#7C3AED" : "transparent";
+  });
+}
+
+// ── FETCH STATUS ──────────────────────────────────────────────────────────────
+async function fetchStatus() {
+  try {
+    const r = await fetch(`${API}/status`);
+    estado = await r.json();
+    botOn = estado.botActivo;
+    // Asegurar que el balance se vea
+    if (!estado.balance && estado.presupuestoTotal) estado.balance = estado.presupuestoTotal;
+    updateUI();
+  } catch(e) { console.error("Error fetch status:", e); }
+}
+
+function updateUI() {
+  const balance = estado.balance || 0;
+  const pnl     = estado.pnlHoy  || 0;
+  const wr      = estado.winRate  || 0;
+
+  document.getElementById("navBalance").textContent  = `$${fmt(balance)}`;
+  document.getElementById("navPnl").textContent      = `${signPN(pnl)}$${fmt(Math.abs(pnl))} hoy`;
+  document.getElementById("navPnl").style.color      = colorPN(pnl);
+  document.getElementById("statBalance").textContent = `$${fmt(balance)}`;
+  document.getElementById("statPnl").textContent     = `${signPN(pnl)}$${fmt(Math.abs(pnl))}`;
+  document.getElementById("statPnl").style.color     = colorPN(pnl);
+  document.getElementById("statWR").textContent      = `${wr}%`;
+  document.getElementById("statWR").style.color      = wr >= 74 ? "#00D97E" : "#FF4560";
+  document.getElementById("statTrades").textContent  = estado.tradesHoy || 0;
+  document.getElementById("statGanados").textContent = `${estado.ganados || 0}✅`;
+  document.getElementById("statPerdidos").textContent= `${estado.perdidos || 0}❌`;
+  document.getElementById("statUsado").textContent   = `$${fmt(estado.presupuestoUsado)}`;
+  document.getElementById("statTotal").textContent   = `$${fmt(estado.presupuestoTotal)}`;
+
+  const pct = estado.presupuestoTotal > 0 ? (estado.presupuestoUsado / estado.presupuestoTotal * 100) : 0;
+  document.getElementById("budgetFill").style.width = `${Math.min(pct, 100)}%`;
+  document.getElementById("budgetFill").style.background = pct >= 90 ? "#FF4560" : pct >= 75 ? "#F59E0B" : "linear-gradient(90deg,#7C3AED,#9D5CF6)";
+
+  const kelly = balance * 0.025;
+  document.getElementById("kellyVal").textContent  = `$${fmt(kelly)}`;
+  if (document.getElementById("kellyValM"))
+    document.getElementById("kellyValM").textContent = `$${fmt(kelly)}`;
+
+  // Bot toggle
+  const toggles = [["botToggle","botKnob"],["botToggleMobile","botKnobMobile"]];
+  toggles.forEach(([tid, kid]) => {
+    const t = document.getElementById(tid);
+    const k = document.getElementById(kid);
+    if (t && k) {
+      t.style.background = botOn ? "#7C3AED" : "#1E2030";
+      k.style.left = botOn ? "23px" : "3px";
+    }
+  });
+
+  // Status dot
+  document.getElementById("statusDot").style.background   = botOn ? "#00D97E" : "#FF4560";
+  document.getElementById("statusLabel").textContent       = botOn ? "EN VIVO" : "PAUSADO";
+  document.getElementById("statusLabel").style.color       = botOn ? "#00D97E" : "#FF4560";
+
+  // Circuit breaker
+  document.getElementById("circuitAlert").style.display = estado.circuitBreaker ? "block" : "none";
+
+  // ROI y ganancia
+  const gananciaTotal = balance - balanceInicial;
+  const roi = balanceInicial > 0 ? (gananciaTotal / balanceInicial * 100).toFixed(1) : 0;
+  if (document.getElementById("gananciaTotal")) {
+    document.getElementById("gananciaTotal").textContent = `${signPN(gananciaTotal)}$${fmt(Math.abs(gananciaTotal))}`;
+    document.getElementById("gananciaTotal").style.color = colorPN(gananciaTotal);
+  }
+  if (document.getElementById("roiTotal")) {
+    document.getElementById("roiTotal").textContent = `${signPN(gananciaTotal)}${roi}%`;
+    document.getElementById("roiTotal").style.color = colorPN(gananciaTotal);
+  }
+}
+
+// ── SEÑALES ───────────────────────────────────────────────────────────────────
+async function fetchSenales() {
+  try {
+    const r = await fetch(`${API}/signals/pending`);
+    const senales = await r.json();
+    document.getElementById("badgeSenales").textContent = `${senales.length} LISTAS`;
+    const html = senales.length === 0
+      ? `<div style="text-align:center;color:#64748B;padding:50px;font-size:14px">🔍 Escaneando mercados...</div>`
+      : senales.map(s => renderSenal(s)).join("");
+    document.getElementById("senalesList").innerHTML = html;
+  } catch(e) {}
+}
+
+function renderSenal(s) {
+  const cc = CATS[s.categoria] || CATS.WILDCARD;
+  const fuerza = s.fuerza || "DÉBIL";
+  const enVivo    = s.enVivo || fuerza === "🔴 EN VIVO";
+  const intraday  = s.intraday || fuerza === "📈 INTRADAY";
+  const fColor = enVivo    ? "#FF4560" :
+                 intraday  ? "#3B82F6" :
+                 fuerza === "MÁXIMA" ? "#00D97E" :
+                 fuerza === "FUERTE" ? "#00D97E" :
+                 fuerza === "MEDIA"  ? "#F59E0B" : "#64748B";
+  const prob = Math.round((s.prob || 0) * 100);
+  return `
+  <div class="card-dark slide-in" style="margin-bottom:10px;border:1px solid ${s.fuerza==="FUERTE"?"#7C3AED44":"#1E2030"}">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+      <div style="flex:1;margin-right:10px">
+        <span class="cat-badge" style="background:${cc}22;color:${cc}">${s.categoria}</span>
+        <span class="strength-badge" style="background:${fColor}22;color:${fColor};margin-left:6px">${enVivo ? "🔴 EN VIVO" : fuerza}</span>
+        <div style="font-size:14px;font-weight:600;color:#E2E8F0;margin-top:6px;line-height:1.3">${s.titulo}</div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div class="mono" style="font-size:24px;font-weight:900;color:${prob>=75?"#00D97E":"#F59E0B"}">${prob}%</div>
+        <div style="font-size:10px;color:#64748B">${s.diasRestantes}d restantes</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+      <span style="font-size:11px;color:#64748B">Vol: $${fmtK(s.volumen)}</span>
+      <span style="font-size:11px;color:#64748B">Liq: $${fmtK(s.liquidez)}</span>
+      <span style="font-size:11px;color:#9D5CF6">👥 ${s.tradersCount} traders</span>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-purple" style="flex:1" onclick="ejecutarSenal(${s.id},'${s.titulo}')">COMPRAR $${s.stake}</button>
+      <button class="btn-gray" style="flex:1" onclick="saltarSenal(${s.id})">SALTAR</button>
+    </div>
+  </div>`;
+}
+
+async function ejecutarSenal(id, titulo) {
+  showPulse();
+  const r = await fetch(`${API}/signals/${id}/ejecutar`, { method:"POST" });
+  const d = await r.json();
+  if (d.success) { showToast(`✅ ${titulo}`, "win"); fetchSenales(); fetchPosiciones(); fetchStatus(); }
+}
+
+async function saltarSenal(id) {
+  await fetch(`${API}/signals/${id}/saltar`, { method:"POST" });
+  fetchSenales();
+  showToast("⏭ Señal saltada", "neutral");
+}
+
+// ── POSICIONES ────────────────────────────────────────────────────────────────
+async function fetchPosiciones() {
+  try {
+    const r = await fetch(`${API}/trades/open`);
+    const pos = await r.json();
+    const unrealized = pos.reduce((s, t) => s + (t.pnl || 0), 0);
+    if (document.getElementById("unrealPnl"))
+      document.getElementById("unrealPnl").textContent = `${signPN(unrealized)}$${fmt(Math.abs(unrealized))}`;
+
+    const html = pos.length === 0
+      ? `<div style="text-align:center;color:#64748B;padding:30px">Sin posiciones abiertas</div>`
+      : pos.map(t => renderPosicion(t)).join("");
+    document.getElementById("posicionesList").innerHTML = html;
+  } catch(e) {}
+}
+
+function renderPosicion(t) {
+  const cc  = CATS[t.categoria] || "#64748B";
+  const pnl = t.pnl || 0;
+  const entrada = Math.round((t.oddsEntrada || 0) * 100);
+  const actual  = Math.round((t.oddsActual  || 0) * 100);
+  return `
+  <div style="padding:10px 0;border-bottom:1px solid #1E2030">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+      <div>
+        <span class="cat-badge" style="background:${cc}22;color:${cc};font-size:9px">${t.categoria}</span>
+        <div style="font-size:13px;font-weight:600;margin-top:4px">${t.titulo}</div>
+        <div style="font-size:11px;color:#64748B;margin-top:2px">${entrada}% → <span style="color:${actual>=entrada?"#00D97E":"#FF4560"}">${actual}%</span> · Stake: $${fmt(t.stake)}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="mono" style="font-size:14px;font-weight:700;color:${colorPN(pnl)}">${signPN(pnl)}$${fmt(Math.abs(pnl))}</div>
+        <div style="font-size:10px;color:#64748B">Potencial: $${fmt(t.potencial)}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="btn-green" style="flex:1;font-size:11px;padding:6px" onclick="aumentarPosicion(${t.id},'${t.titulo}')">+ AUMENTAR</button>
+      <button class="btn-red"   style="flex:1;font-size:11px;padding:6px" onclick="cerrarPosicion(${t.id},'${t.titulo}',${t.oddsActual},${t.stake})">✕ CERRAR $${fmt(t.stake * (t.oddsActual||1))}</button>
+    </div>
+  </div>`;
+}
+
+async function cerrarPosicion(id, titulo, oddsActual, stake) {
+  if (!confirm(`¿Cerrar "${titulo}"?\nRecibirás: $${fmt(stake * oddsActual)}`)) return;
+  const r = await fetch(`${API}/trades/${id}/cerrar`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({}) });
+  const d = await r.json();
+  if (d.success) { showToast(`✅ Cerrado: ${signPN(d.pnl)}$${fmt(Math.abs(d.pnl))}`, d.pnl >= 0 ? "win" : "loss"); fetchPosiciones(); fetchStatus(); fetchHistorial(); }
+}
+
+async function aumentarPosicion(id, titulo) {
+  const monto = prompt(`¿Cuánto quieres agregar a "${titulo}"?\nEscribe el monto en dólares:`);
+  if (!monto || isNaN(monto)) return;
+  const r = await fetch(`${API}/trades/${id}/aumentar`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ monto: parseFloat(monto) }) });
+  const d = await r.json();
+  if (d.success) { showPulse(); showToast(`✅ Aumentado: Nuevo total $${fmt(d.nuevoStake)}`, "win"); fetchPosiciones(); fetchStatus(); }
+  else showToast(`❌ ${d.error}`, "loss");
+}
+
+// ── HISTORIAL ────────────────────────────────────────────────────────────────
+async function fetchHistorial() {
+  try {
+    const r = await fetch(`${API}/trades/historial`);
+    const trades = await r.json();
+    document.getElementById("historialCount").textContent = `${trades.length} trades`;
+    if (!trades.length) return;
+    document.getElementById("historialList").innerHTML = trades.map(t => {
+      const icon = t.estado === "ganado" ? "✅" : t.estado === "perdido" ? "❌" : t.estado === "cerrado_manual" ? "🔒" : "⏳";
+      const hora = t.abiertaEn ? new Date(t.abiertaEn).toLocaleTimeString("es", { hour:"2-digit", minute:"2-digit" }) : "--";
+      return `
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1E2030;font-size:12px">
+        <span style="color:#64748B;min-width:38px;font-size:10px">${hora}</span>
+        <span style="flex:1;color:#E2E8F0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.titulo}</span>
+        <span class="mono" style="color:#F59E0B;flex-shrink:0">${Math.round((t.oddsEntrada||0)*100)}%</span>
+        <span class="mono" style="color:#64748B;flex-shrink:0">$${fmt(t.stake)}</span>
+        <span class="mono" style="color:${colorPN(t.pnl)};flex-shrink:0;font-weight:700">${signPN(t.pnl)}$${fmt(Math.abs(t.pnl||0))}</span>
+        <span>${icon}</span>
+      </div>`;
+    }).join("");
+  } catch(e) {}
+}
+
+// ── TRADERS ───────────────────────────────────────────────────────────────────
+async function fetchTraders() {
+  try {
+    const r = await fetch(`${API}/traders`);
+    const traders = await r.json();
+    const html = traders.map(t => renderTrader(t)).join("");
+    document.getElementById("tradersList").innerHTML = html;
+    if (document.getElementById("tradersListMobile"))
+      document.getElementById("tradersListMobile").innerHTML = html;
+
+    const whaleHtml = traders.slice(0,4).map((t, i) => {
+      const pct = [85,70,60,45][i];
+      return `
+      <div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px">
+          <span>${t.alias || t.wallet}</span>
+          <span style="color:#9D5CF6;font-weight:700">${t.winRate}% WR</span>
+        </div>
+        <div style="background:#1E2030;border-radius:4px;height:5px">
+          <div style="width:${pct}%;background:linear-gradient(90deg,#7C3AED,#9D5CF6);height:100%;border-radius:4px"></div>
+        </div>
+      </div>`;
+    }).join("");
+    document.getElementById("whaleList").innerHTML = whaleHtml;
+    if (document.getElementById("whaleListMobile"))
+      document.getElementById("whaleListMobile").innerHTML = whaleHtml;
+  } catch(e) {}
+}
+
+function renderTrader(t) {
+  const sc = t.score >= 80 ? "#00D97E" : t.score >= 70 ? "#F59E0B" : "#FF4560";
+  const initials = (t.alias || t.wallet || "??").slice(0,2).toUpperCase();
+  return `
+  <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #1E2030">
+    <div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#7C3AED,#9D5CF6);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0">${initials}</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.alias || t.wallet+"…"}</div>
+      <div style="font-size:10px;color:#64748B">${t.categoria} · activo ${t.activo}</div>
+    </div>
+    <div style="text-align:center;min-width:36px">
+      <div style="font-size:11px;font-weight:700;color:${sc}">${t.score}</div>
+      <div style="font-size:9px;color:#64748B">score</div>
+    </div>
+    <div style="text-align:center;min-width:44px">
+      <div class="mono" style="font-size:11px;font-weight:700;color:#00D97E">+${t.roi}%</div>
+      <div style="font-size:9px;color:#64748B">ROI</div>
+    </div>
+    <button onclick="toggleTrader('${t.wallet}')" style="background:${t.copiando?"#7C3AED":"#1A1C26"};border:1px solid ${t.copiando?"#7C3AED":"#1E2030"};border-radius:6px;padding:4px 8px;color:${t.copiando?"#fff":"#64748B"};font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">
+      ${t.copiando?"✓ COPY":"COPY"}
+    </button>
+  </div>`;
+}
+
+async function toggleTrader(wallet) {
+  await fetch(`${API}/traders/${wallet}/toggle`, { method:"POST" });
+  fetchTraders();
+}
+
+// ── GRÁFICO ───────────────────────────────────────────────────────────────────
+async function fetchGrafico() {
+  try {
+    const r = await fetch(`${API}/balance/historial`);
+    const data = await r.json();
+    const ctx = document.getElementById("balanceChart").getContext("2d");
+    if (chartInstance) chartInstance.destroy();
+    chartInstance = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: data.map(d => d.dia),
+        datasets: [{
+          data: data.map(d => d.valor),
+          borderColor: "#7C3AED",
+          backgroundColor: "rgba(124,58,237,0.1)",
+          borderWidth: 2.5,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.4,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false }, tooltip: {
+          callbacks: { label: ctx => `$${fmt(ctx.raw)}` },
+          backgroundColor: "#1A1C26", titleColor: "#64748B", bodyColor: "#E2E8F0",
+          borderColor: "#1E2030", borderWidth: 1,
+        }},
+        scales: {
+          x: { ticks: { color: "#64748B", font: { size: 10 } }, grid: { color: "#1E203055" } },
+          y: { ticks: { color: "#64748B", font: { size: 10 }, callback: v => `$${v}` }, grid: { color: "#1E203055" } },
+        }
+      }
+    });
+  } catch(e) {}
+}
+
+// ── CONTROLES ─────────────────────────────────────────────────────────────────
+async function toggleBot() {
+  const endpoint = botOn ? "pausar" : "reanudar";
+  const r = await fetch(`${API}/bot/${endpoint}`, { method:"POST" });
+  const d = await r.json();
+  botOn = d.botActivo;
+  showToast(botOn ? "🤖 Bot activado" : "⏸ Bot pausado", "neutral");
+  fetchStatus();
+}
+
+async function resetCircuit() {
+  await fetch(`${API}/bot/reset-circuit`, { method:"POST" });
+  showToast("✅ Circuit breaker reiniciado", "win");
+  fetchStatus();
+}
+
+function setPresupuesto(val) {
+  localStorage.setItem("balanceInicial", val);
+  fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ presupuesto: val }) });
+  showToast(`💰 Presupuesto: $${val}`, "neutral");
+  fetchStatus();
+}
+
+function setPresupuestoCustom() {
+  const val = parseFloat(document.getElementById("customPresupuesto").value);
+  if (!val || val < 1) return;
+  setPresupuesto(val);
+}
+
+function updateStake(val) {
+  document.getElementById("stakeVal").textContent = `$${val}`;
+  if (document.getElementById("stakeValM"))
+    document.getElementById("stakeValM").textContent = `$${val}`;
+  fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ stake: val }) });
+}
+
+function updateOdds(val) {
+  document.getElementById("oddsVal").textContent = `${val}%`;
+  if (document.getElementById("oddsValM"))
+    document.getElementById("oddsValM").textContent = `${val}%`;
+  fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ minOdds: val/100 }) });
+}
+
+// ── CATEGORÍAS ────────────────────────────────────────────────────────────────
+function renderCategorias() {
+  const html = Object.entries(categoriasActivas).map(([cat, on]) => `
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid #1E2030">
+    <span style="font-size:13px;color:${on?"#E2E8F0":"#64748B"}">${cat}</span>
+    <div class="toggle-switch" style="background:${on?"#7C3AED":"#1E2030"}" onclick="toggleCat('${cat}')">
+      <div class="toggle-knob" style="left:${on?23:3}px"></div>
+    </div>
+  </div>`).join("");
+  if (document.getElementById("categorias"))
+    document.getElementById("categorias").innerHTML = html;
+}
+
+function toggleCat(cat) {
+  categoriasActivas[cat] = !categoriasActivas[cat];
+  renderCategorias();
+}
+
+// ── LOOP PRINCIPAL ────────────────────────────────────────────────────────────
+async function refresh() {
+  await fetchStatus();
+  await fetchSenales();
+  await fetchPosiciones();
+  await fetchHistorial();
+  await fetchGrafico();
+}
+
+fetchTraders();
+renderCategorias();
+refresh();
+setInterval(refresh, 3000);
+setInterval(fetchTraders, 30000);
+</script>
+</body>
+</html>
