@@ -91,27 +91,46 @@ if (modoReal) {
 
 // ── HELPERS DE ÓRDENES (formato correcto de polymarket.us) ────────────────────
 // El API espera intent/quantity/price{value,currency}, NO side/size.
-async function pmComprar(marketSlug, prob, quantity) {
+// Mejor bid/ask/precio actual del order book
+async function pmBbo(marketSlug) {
+  try {
+    const r  = await pmUs.get(`/v1/markets/${marketSlug}/bbo`);
+    const md = r?.marketData || {};
+    return {
+      bid:  parseFloat(md.bestBid?.value || 0) || null,
+      ask:  parseFloat(md.bestAsk?.value || 0) || null,
+      last: parseFloat(md.currentPx?.value || md.lastTradePx?.value || 0) || null,
+    };
+  } catch(e) { return { bid: null, ask: null, last: null }; }
+}
+// Precio "de referencia" (último/mid) para mostrar P&L
+async function pmPrecioActual(marketSlug) {
+  const b = await pmBbo(marketSlug);
+  return b.last || b.bid || b.ask || null;
+}
+// Comprar con EJECUCIÓN INMEDIATA: paga el ask (+1 tick) para que se llene ya,
+// no quede como orden límite colgada. quantity = nº de shares deseado.
+async function pmComprar(marketSlug, probRef, quantity) {
+  const b = await pmBbo(marketSlug);
+  // Pagar el ask + 1 centavo asegura el fill; si no hay ask, usar la referencia
+  let precio = b.ask ? Math.min(b.ask + 0.01, 0.99) : (probRef || b.last || 0.5);
+  precio = Math.round(precio * 100) / 100; // tick 0.01
   return pmUs.post("/v1/orders", {
     marketSlug,
     intent:   "ORDER_INTENT_BUY_LONG",
     type:     "ORDER_TYPE_LIMIT",
-    price:    { value: prob.toFixed(2), currency: "USD" },
+    price:    { value: precio.toFixed(2), currency: "USD" },
     quantity: Math.max(1, Math.round(quantity)),
-    tif:      "TIME_IN_FORCE_GOOD_TILL_CANCEL",
+    tif:      "TIME_IN_FORCE_IMMEDIATE_OR_CANCEL", // se llena al instante o se cancela (sin colgar)
   });
 }
 // Cerrar posición completa de un mercado (para copiar las ventas del trader)
 async function pmCerrar(marketSlug) {
   return pmUs.post("/v1/order/close-position", { marketSlug });
 }
-// Precio actual de mercado (0-1) desde el order book
-async function pmPrecioActual(marketSlug) {
-  try {
-    const r = await pmUs.get(`/v1/markets/${marketSlug}/bbo`);
-    const md = r?.marketData || {};
-    return parseFloat(md.currentPx?.value || md.lastTradePx?.value || md.bestBid?.value || 0) || null;
-  } catch(e) { return null; }
+// Cancelar una orden límite pendiente
+async function pmCancelar(orderId, marketSlug) {
+  return pmUs.post(`/v1/order/${orderId}/cancel`, { marketSlug });
 }
 
 // CLOB client (solo para leer mercados públicos)
@@ -788,14 +807,15 @@ app.post("/api/mis-posiciones/comprar", async (req, res) => {
   const { slug, monto } = req.body;
   if (!slug) return res.status(400).json({ error: "Falta slug" });
   try {
-    const prob = await pmPrecioActual(slug);
-    if (!prob) return res.status(400).json({ error: "No hay precio de mercado" });
+    const b = await pmBbo(slug);
+    const precioCompra = b.ask || b.last || b.bid;
+    if (!precioCompra) return res.status(400).json({ error: "No hay precio de mercado" });
     const dolares  = parseFloat(monto) || CFG.stake;
-    const quantity = Math.max(1, Math.round(dolares / prob));
-    const r = await pmComprar(slug, prob, quantity);
-    console.log(`✅ Compra manual: ${slug} +$${dolares} @ ${(prob*100).toFixed(0)}%`);
+    const quantity = Math.max(1, Math.round(dolares / precioCompra));
+    const r = await pmComprar(slug, precioCompra, quantity);
+    console.log(`✅ Compra manual: ${slug} +$${dolares} (${quantity} sh @ ~${(precioCompra*100).toFixed(0)}¢)`);
     setTimeout(actualizarBalanceReal, 2000);
-    res.json({ success: true, comprado: quantity, precio: prob, order: r });
+    res.json({ success: true, comprado: quantity, precio: precioCompra, order: r });
   } catch(e) {
     res.status(500).json({ error: e.response?.data?.message || e.message });
   }
