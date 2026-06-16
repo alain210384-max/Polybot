@@ -211,6 +211,17 @@
         </div>
       </div>
 
+      <!-- POSICIONES REALES POLYMARKET -->
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <span style="font-size:14px;font-weight:700">🔗 Mis Posiciones en Polymarket</span>
+          <button class="btn-gray" style="font-size:10px;padding:4px 10px" onclick="fetchMisPosiciones()">↻ Sync</button>
+        </div>
+        <div id="misPosicionesList" style="max-height:240px;overflow-y:auto">
+          <div style="text-align:center;color:#64748B;padding:20px;font-size:12px">Cargando...</div>
+        </div>
+      </div>
+
       <!-- HISTORIAL -->
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -771,6 +782,44 @@ function toggleCat(cat) {
   renderCategorias();
 }
 
+// ── MIS POSICIONES REALES ─────────────────────────────────────────────────────
+async function fetchMisPosiciones() {
+  try {
+    const r = await fetch(`${API}/mis-posiciones`);
+    const d = await r.json();
+    const el = document.getElementById("misPosicionesList");
+    if (!el) return;
+
+    const todas = [...(d.posiciones || []), ...(d.trades || [])];
+    if (d.error && !todas.length) {
+      el.innerHTML = `<div style="text-align:center;color:#FF4560;padding:16px;font-size:11px">⚠️ ${d.error}</div>`; return;
+    }
+    if (!todas.length) {
+      el.innerHTML = `<div style="text-align:center;color:#64748B;padding:16px;font-size:12px">Sin posiciones abiertas en Polymarket</div>`; return;
+    }
+
+    el.innerHTML = todas.slice(0, 15).map(t => {
+      const titulo = t.market?.question || t.asset_id || t.token_id || t.id || "Posición";
+      const precio = t.price || t.avg_price || t.limit_price || "–";
+      const size   = t.original_size || t.size || t.amount || "–";
+      const side   = (t.side || t.outcome || "").toUpperCase();
+      const sideColor = side === "BUY" || side === "YES" ? "#00D97E" : "#FF4560";
+      return `
+      <div style="padding:8px 0;border-bottom:1px solid #1E2030;font-size:12px">
+        <div style="color:#E2E8F0;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${titulo}</div>
+        <div style="display:flex;gap:12px;color:#64748B">
+          <span style="color:${sideColor};font-weight:700">${side || "OPEN"}</span>
+          <span>Precio: <span class="mono" style="color:#9D5CF6">${precio}</span></span>
+          <span>Size: <span class="mono">${size}</span></span>
+        </div>
+      </div>`;
+    }).join("");
+  } catch(e) {
+    const el = document.getElementById("misPosicionesList");
+    if (el) el.innerHTML = `<div style="text-align:center;color:#64748B;padding:16px;font-size:11px">Sin conexión con Polymarket</div>`;
+  }
+}
+
 // ── LOOP PRINCIPAL ────────────────────────────────────────────────────────────
 async function refresh() {
   await fetchStatus();
@@ -783,8 +832,10 @@ async function refresh() {
 fetchTraders();
 renderCategorias();
 refresh();
+fetchMisPosiciones();
 setInterval(refresh, 3000);
 setInterval(fetchTraders, 30000);
+setInterval(fetchMisPosiciones, 30000);
 </script>
 </body>
 </html>

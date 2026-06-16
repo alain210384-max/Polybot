@@ -43,6 +43,21 @@ try {
   console.log("⚠️ polymarket-us no disponible:", e.message);
 }
 
+// ── CLIENTE CLOB (para leer posiciones reales del usuario) ────────────────────
+let clobClient = null;
+try {
+  const { ClobClient } = require("@polymarket/clob-client-v2");
+  clobClient = new ClobClient(
+    "https://clob.polymarket.com",
+    137,
+    undefined,
+    { key: process.env.POLYMARKET_KEY_ID, secret: process.env.POLYMARKET_SECRET_KEY, passphrase: "" }
+  );
+  console.log("✅ CLOB Client conectado");
+} catch(e) {
+  console.log("⚠️ ClobClient no disponible:", e.message);
+}
+
 // ── ESTADO GLOBAL ─────────────────────────────────────────────────────────────
 let botActivo          = true;
 let balanceReal        = CFG.budget;
@@ -530,6 +545,23 @@ app.post("/api/trades/:id/aumentar", (req, res) => {
   trade.ganancia = parseFloat((trade.potencial - trade.stake).toFixed(2));
   presupuestoUsado += extra;
   res.json({ success: true, nuevoStake: trade.stake, nuevoPotencial: trade.potencial });
+});
+
+// ── POSICIONES REALES DESDE POLYMARKET ───────────────────────────────────────
+app.get("/api/mis-posiciones", async (req, res) => {
+  if (!clobClient) return res.json({ error: "CLOB no conectado", posiciones: [], trades: [] });
+  try {
+    const [ordersRes, tradesRes] = await Promise.all([
+      clobClient.getOpenOrders().catch(() => ({ data: [] })),
+      clobClient.getTrades({ maker_address: CFG.keyId }).catch(() => ({ data: [] })),
+    ]);
+    const ordenes  = ordersRes?.data  || ordersRes  || [];
+    const trades   = tradesRes?.data  || tradesRes  || [];
+    res.json({ posiciones: ordenes.slice(0, 20), trades: trades.slice(0, 30) });
+  } catch(e) {
+    console.error("Error obteniendo posiciones:", e.message);
+    res.json({ error: e.message, posiciones: [], trades: [] });
+  }
 });
 
 app.post("/api/bot/pausar",        (req, res) => { botActivo = false; res.json({ botActivo }); });
