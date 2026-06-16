@@ -122,8 +122,10 @@ let tradersCache     = [];        // cache del leaderboard
 //   "What will S&P 500 (SPX) hit..." / "SPY (SPY) Up or Down..."
 //   "Nasdaq 100 (QQQ)..." / "Nasdaq 100 (NDX) Up or Down..."
 //   "Dow Jones (DJIA) Up or Down..." / "Russell 2000 (RUT) Up or Down..."
-const mapCategoria = (tags = [], question = "") => {
-  const t = (tags.join(" ") + " " + question).toLowerCase();
+const mapCategoria = (tags = [], question = "", slug = "") => {
+  // El slug es clave: los mercados de tenis traen "atp-…"/"wta-…" aunque el
+  // título solo diga "Parma: Jugador vs Jugador" (sin la palabra "tennis").
+  const t = (tags.join(" ") + " " + question + " " + slug).toLowerCase();
 
   // hasW: ticker como PALABRA completa (evita "down"→dow, "method"→eth, "inquiry"→nq)
   const hasW = (...words) => words.some(w =>
@@ -141,15 +143,36 @@ const mapCategoria = (tags = [], question = "") => {
       hasW("rut"))                                             return "RUSSELL";
   if (hasW("vix") || t.includes("volatility index"))          return "VIX";
 
-  // ── Deportes ──
-  if (hasW("mlb", "baseball", "yankees", "dodgers", "mets", "braves", "astros", "cubs") ||
+  // ── Deportes (nombres reales en Polymarket verificados 2026-06-16) ──
+  // Béisbol: "MLB: ..."
+  if (t.includes("mlb") || t.includes("baseball") || t.includes("world series") ||
+      hasW("yankees", "dodgers", "mets", "braves", "astros", "cubs") ||
       t.includes("red sox"))                                   return "BEISBOL";
-  if (hasW("nba", "lakers", "warriors", "celtics", "nuggets") ||
+  // Basket: "NBA: ...", "2026 NBA Draft: ..."
+  if (t.includes("nba") || t.includes("basketball") ||
+      hasW("lakers", "warriors", "celtics", "nuggets", "knicks", "bulls", "mavericks") ||
       t.includes("miami heat"))                                return "NBA";
-  if (hasW("nfl", "chiefs", "cowboys", "eagles", "patriots"))  return "NFL";
+  // Fútbol americano: OJO — Polymarket usa "Pro Football" para casi todo, no "NFL"
+  if (t.includes("nfl") || t.includes("pro football") || t.includes("super bowl") ||
+      hasW("chiefs", "cowboys", "eagles", "patriots"))         return "NFL";
+  // Hockey: "NHL: ...", "Stanley Cup Finals: ..."
+  if (t.includes("nhl") || t.includes("hockey") || t.includes("stanley cup")) return "NHL";
+  // MMA: "UFC ...: X vs. Y"
   if (hasW("ufc", "mma") || t.includes("boxing"))              return "UFC";
-  if (t.includes("soccer") || t.includes("premier league") || t.includes("champions league") ||
-      hasW("madrid", "barcelona"))                             return "SOCCER";
+  // Golf: "PGA Tour: ...", "FedEx Cup ...", "Masters" (antes que Tenis por "U.S. Open")
+  if (t.includes("pga") || t.includes("fedex cup") || t.includes("golf") ||
+      t.includes("the masters") || t.includes("ryder cup"))   return "GOLF";
+  // Tenis: "...Open: X vs Y", "Wimbledon", "(Tennis)" — el trader OPERA esto
+  if (t.includes("tennis") || t.includes("wimbledon") || t.includes("atp") ||
+      t.includes("wta") || t.includes("roland garros") || t.includes("australian open") ||
+      t.includes("french open") || t.includes("grass court") || t.includes("halle open") ||
+      t.includes("hsbc championships"))                        return "TENIS";
+  // Fútbol/soccer: "World Cup ...", "X vs. Y" (selecciones), ligas europeas
+  if (t.includes("soccer") || t.includes("world cup") || t.includes("premier league") ||
+      t.includes("champions league") || t.includes("la liga") || t.includes("bundesliga") ||
+      t.includes("fc bayern") || hasW("madrid", "barcelona"))  return "SOCCER";
+  // F1
+  if (t.includes("formula 1") || t.includes("grand prix") || hasW("f1")) return "F1";
   if (t.includes("sport"))                                     return "SPORTS";
 
   // ── Crypto ──
@@ -273,7 +296,7 @@ const ejecutarCopyTrade = async (actividad, wallet) => {
   const trade = {
     id: Date.now(), marketId: actividad.conditionId || slug,
     slug, titulo: `[COPY ${wallet.slice(0,6)}…] ${title}`,
-    categoria: mapCategoria([], title),
+    categoria: mapCategoria([], title, slug || ""),
     oddsEntrada: prob, oddsActual: prob,
     stake: CFG.stake, shares, potencial: shares, ganancia,
     pnl: 0, fuerza: "🔁 COPY",
@@ -375,7 +398,7 @@ const fetchMercadosReales = async () => {
 
       const liquidez  = parseFloat(m.liquidity || m.liquidityNum || 0);
       const volumen   = parseFloat(m.volume    || m.volumeNum    || 0);
-      const categoria = mapCategoria(m.tags || [], m.question || "");
+      const categoria = mapCategoria(m.tags || [], m.question || "", m.slug || "");
 
       const resolveDate   = m.endDate || m.resolutionDate || m.endDateIso;
       const diasRestantes = resolveDate
