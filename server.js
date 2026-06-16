@@ -602,11 +602,15 @@ app.get("/api/mis-posiciones", async (req, res) => {
   }
   try {
     const [posRes, actRes] = await Promise.all([
-      pmUs.get("/v1/portfolio/positions").catch(e => { console.log("positions err:", e.message); return { data: [] }; }),
-      pmUs.get("/v1/portfolio/activities", true, { limit: 30 }).catch(e => { console.log("activities err:", e.message); return { data: [] }; }),
+      pmUs.get("/v1/portfolio/positions").catch(e => { console.log("positions err:", e.message); return {}; }),
+      pmUs.get("/v1/portfolio/activities", true, { limit: 30 }).catch(e => { console.log("activities err:", e.message); return {}; }),
     ]);
-    const posiciones = posRes?.data || posRes || [];
-    const trades     = actRes?.data  || actRes  || [];
+    // polymarket.us devuelve objetos: {availablePositions:[...]} y {activities:[...]}
+    const posiciones = Array.isArray(posRes?.availablePositions) ? posRes.availablePositions
+                     : Array.isArray(posRes?.positions)         ? posRes.positions
+                     : Array.isArray(posRes)                     ? posRes : [];
+    const trades     = Array.isArray(actRes?.activities) ? actRes.activities
+                     : Array.isArray(actRes)             ? actRes : [];
     res.json({ modoReal: true, keyId: pmUs.keyId?.slice(0,8)+"…", posiciones: posiciones.slice(0,20), trades: trades.slice(0,30) });
   } catch(e) {
     console.error("Error posiciones:", e.message);
