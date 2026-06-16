@@ -690,13 +690,38 @@ app.get("/api/mis-posiciones", async (req, res) => {
       pmUs.get("/v1/portfolio/positions").catch(e => { console.log("positions err:", e.message); return {}; }),
       pmUs.get("/v1/portfolio/activities", true, { limit: 30 }).catch(e => { console.log("activities err:", e.message); return {}; }),
     ]);
-    // polymarket.us devuelve objetos: {availablePositions:[...]} y {activities:[...]}
-    const posiciones = Array.isArray(posRes?.availablePositions) ? posRes.availablePositions
-                     : Array.isArray(posRes?.positions)         ? posRes.positions
-                     : Array.isArray(posRes)                     ? posRes : [];
-    const trades     = Array.isArray(actRes?.activities) ? actRes.activities
-                     : Array.isArray(actRes)             ? actRes : [];
-    res.json({ modoReal: true, keyId: pmUs.keyId?.slice(0,8)+"…", posiciones: posiciones.slice(0,20), trades: trades.slice(0,30) });
+
+    // positions viene como OBJETO { slug: {...} } — convertir a array y normalizar
+    const posObj = (posRes?.positions && typeof posRes.positions === "object" && !Array.isArray(posRes.positions))
+      ? posRes.positions : {};
+    const posiciones = Object.values(posObj)
+      .filter(p => parseFloat(p.netPosition || 0) > 0)   // solo posiciones abiertas
+      .map(p => {
+        const shares = parseFloat(p.netPosition || 0);
+        const costo  = parseFloat(p.cost?.value || 0);
+        const meta   = p.marketMetadata || {};
+        return {
+          titulo:     meta.title || meta.slug || "Posición",
+          slug:       meta.slug || "",
+          outcome:    meta.outcome || "",
+          shares,
+          costo:      parseFloat(costo.toFixed(2)),
+          precioProm: shares > 0 ? parseFloat((costo / shares).toFixed(3)) : 0,
+        };
+      });
+
+    // activities (historial) — normalizado y legible
+    const actArr = Array.isArray(actRes?.activities) ? actRes.activities : [];
+    const trades = actArr.slice(0, 30).map(a => {
+      const r    = a.positionResolution || a.trade || a.fill || a.order || {};
+      const meta = r.marketMetadata || r.beforePosition?.marketMetadata || {};
+      return {
+        titulo: meta.title || meta.slug || (a.type || "").replace("ACTIVITY_TYPE_", "") || "Actividad",
+        tipo:   (a.type || "").replace("ACTIVITY_TYPE_", "").replace(/_/g, " "),
+      };
+    });
+
+    res.json({ modoReal: true, keyId: pmUs.keyId?.slice(0,8)+"…", posiciones, trades });
   } catch(e) {
     console.error("Error posiciones:", e.message);
     res.json({ error: e.message, modoReal: true, posiciones: [], trades: [] });

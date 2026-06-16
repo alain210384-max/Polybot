@@ -803,27 +803,25 @@ async function fetchMisPosiciones() {
     const el = document.getElementById("misPosicionesList");
     if (!el) return;
 
-    const todas = [...(d.posiciones || []), ...(d.trades || [])];
-    if (d.error && !todas.length) {
+    const posiciones = d.posiciones || [];
+    if (d.error && !posiciones.length) {
       el.innerHTML = `<div style="text-align:center;color:#FF4560;padding:16px;font-size:11px">⚠️ ${d.error}</div>`; return;
     }
-    if (!todas.length) {
+    if (!posiciones.length) {
       el.innerHTML = `<div style="text-align:center;color:#64748B;padding:16px;font-size:12px">Sin posiciones abiertas en Polymarket</div>`; return;
     }
 
-    el.innerHTML = todas.slice(0, 15).map(t => {
-      const titulo = t.market?.question || t.asset_id || t.token_id || t.id || "Posición";
-      const precio = t.price || t.avg_price || t.limit_price || "–";
-      const size   = t.original_size || t.size || t.amount || "–";
-      const side   = (t.side || t.outcome || "").toUpperCase();
-      const sideColor = side === "BUY" || side === "YES" ? "#00D97E" : "#FF4560";
+    el.innerHTML = posiciones.slice(0, 15).map(p => {
+      const outColor = (p.outcome || "").toLowerCase() === "yes" ? "#00D97E" : "#FF4560";
+      const precio = p.precioProm ? `${(p.precioProm*100).toFixed(0)}¢` : "–";
       return `
       <div style="padding:8px 0;border-bottom:1px solid #1E2030;font-size:12px">
-        <div style="color:#E2E8F0;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${titulo}</div>
-        <div style="display:flex;gap:12px;color:#64748B">
-          <span style="color:${sideColor};font-weight:700">${side || "OPEN"}</span>
+        <div style="color:#E2E8F0;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.titulo}</div>
+        <div style="display:flex;gap:12px;color:#64748B;flex-wrap:wrap">
+          <span style="color:${outColor};font-weight:700">${p.outcome || "OPEN"}</span>
           <span>Precio: <span class="mono" style="color:#9D5CF6">${precio}</span></span>
-          <span>Size: <span class="mono">${size}</span></span>
+          <span>Shares: <span class="mono">${p.shares}</span></span>
+          <span>Costo: <span class="mono" style="color:#E2E8F0">$${p.costo}</span></span>
         </div>
       </div>`;
     }).join("");
