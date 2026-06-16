@@ -813,15 +813,37 @@ async function fetchMisPosiciones() {
 
     el.innerHTML = posiciones.slice(0, 15).map(p => {
       const outColor = (p.outcome || "").toLowerCase() === "yes" ? "#00D97E" : "#FF4560";
-      const precio = p.precioProm ? `${(p.precioProm*100).toFixed(0)}¢` : "–";
+      const compra   = p.precioProm ? `${(p.precioProm*100).toFixed(0)}¢` : "–";
+      const ahora    = (p.precioActual != null) ? `${(p.precioActual*100).toFixed(0)}¢` : "–";
+      const pnl      = p.pnl;
+      const pnlPct   = p.pnlPct;
+      const pnlColor = pnl == null ? "#64748B" : (pnl >= 0 ? "#00D97E" : "#FF4560");
+      const pnlTxt   = pnl == null ? "" : `${pnl >= 0 ? "+" : ""}$${pnl} (${pnl >= 0 ? "+" : ""}${pnlPct}%)`;
+      const icono    = p.icono
+        ? `<img src="${p.icono}" style="width:22px;height:22px;border-radius:50%;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'">`
+        : `<div style="width:22px;height:22px;border-radius:50%;background:#1E2030;flex-shrink:0"></div>`;
+      const slugJS = (p.slug || "").replace(/'/g, "\\'");
       return `
-      <div style="padding:8px 0;border-bottom:1px solid #1E2030;font-size:12px">
-        <div style="color:#E2E8F0;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.titulo}</div>
-        <div style="display:flex;gap:12px;color:#64748B;flex-wrap:wrap">
-          <span style="color:${outColor};font-weight:700">${p.outcome || "OPEN"}</span>
-          <span>Precio: <span class="mono" style="color:#9D5CF6">${precio}</span></span>
-          <span>Shares: <span class="mono">${p.shares}</span></span>
+      <div style="padding:10px 0;border-bottom:1px solid #1E2030;font-size:12px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          ${icono}
+          <div style="flex:1;overflow:hidden">
+            <div style="color:#E2E8F0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.titulo}</div>
+            <div style="font-size:10px"><span style="color:${outColor};font-weight:700">${p.outcome || "OPEN"}</span> · <span class="mono" style="color:#64748B">${p.shares} sh</span></div>
+          </div>
+          <div style="text-align:right">
+            <div class="mono" style="color:#9D5CF6;font-weight:700">${ahora}</div>
+            <div class="mono" style="font-size:10px;color:${pnlColor}">${pnlTxt}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;color:#64748B;font-size:10px;margin-bottom:6px">
+          <span>Compra: <span class="mono">${compra}</span></span>
           <span>Costo: <span class="mono" style="color:#E2E8F0">$${p.costo}</span></span>
+          <span>Valor: <span class="mono" style="color:#E2E8F0">$${p.valorActual != null ? p.valorActual : "–"}</span></span>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button onclick="comprarMas('${slugJS}','${p.titulo.replace(/'/g,"")}')" style="flex:1;padding:6px;border:none;border-radius:6px;background:#16261c;color:#00D97E;font-weight:700;cursor:pointer;font-size:11px">+ Comprar</button>
+          <button onclick="venderPos('${slugJS}','${p.titulo.replace(/'/g,"")}')" style="flex:1;padding:6px;border:none;border-radius:6px;background:#2a1518;color:#FF4560;font-weight:700;cursor:pointer;font-size:11px">Vender</button>
         </div>
       </div>`;
     }).join("");
@@ -829,6 +851,35 @@ async function fetchMisPosiciones() {
     const el = document.getElementById("misPosicionesList");
     if (el) el.innerHTML = `<div style="text-align:center;color:#64748B;padding:16px;font-size:11px">Sin conexión con Polymarket</div>`;
   }
+}
+
+async function comprarMas(slug, titulo) {
+  const monto = prompt(`¿Cuántos dólares quieres comprar más de "${titulo}"?`, "3");
+  if (monto === null) return;
+  const dolares = parseFloat(monto);
+  if (!dolares || dolares <= 0) { showToast("Monto inválido", "neutral"); return; }
+  try {
+    const r = await fetch(`${API}/mis-posiciones/comprar`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, monto: dolares }),
+    });
+    const d = await r.json();
+    if (d.success) { showToast(`✅ Compraste $${dolares} más @ ${(d.precio*100).toFixed(0)}¢`, "win"); fetchMisPosiciones(); }
+    else showToast(`⚠️ ${d.error || "Error"}`, "neutral");
+  } catch(e) { showToast("⚠️ Sin conexión", "neutral"); }
+}
+
+async function venderPos(slug, titulo) {
+  if (!confirm(`¿Vender toda tu posición de "${titulo}" y sacar el dinero?`)) return;
+  try {
+    const r = await fetch(`${API}/mis-posiciones/cerrar`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug }),
+    });
+    const d = await r.json();
+    if (d.success) { showToast(`✅ Posición vendida`, "win"); fetchMisPosiciones(); }
+    else showToast(`⚠️ ${d.error || "Error"}`, "neutral");
+  } catch(e) { showToast("⚠️ Sin conexión", "neutral"); }
 }
 
 // ── LOOP PRINCIPAL ────────────────────────────────────────────────────────────

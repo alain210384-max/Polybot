@@ -105,6 +105,14 @@ async function pmComprar(marketSlug, prob, quantity) {
 async function pmCerrar(marketSlug) {
   return pmUs.post("/v1/order/close-position", { marketSlug });
 }
+// Precio actual de mercado (0-1) desde el order book
+async function pmPrecioActual(marketSlug) {
+  try {
+    const r = await pmUs.get(`/v1/markets/${marketSlug}/bbo`);
+    const md = r?.marketData || {};
+    return parseFloat(md.currentPx?.value || md.lastTradePx?.value || md.bestBid?.value || 0) || null;
+  } catch(e) { return null; }
+}
 
 // CLOB client (solo para leer mercados públicos)
 let clobClient = null;
@@ -729,7 +737,7 @@ app.get("/api/mis-posiciones", async (req, res) => {
     // positions viene como OBJETO { slug: {...} } — convertir a array y normalizar
     const posObj = (posRes?.positions && typeof posRes.positions === "object" && !Array.isArray(posRes.positions))
       ? posRes.positions : {};
-    const posiciones = Object.values(posObj)
+    const posBase = Object.values(posObj)
       .filter(p => parseFloat(p.netPosition || 0) > 0)   // solo posiciones abiertas
       .map(p => {
         const shares = parseFloat(p.netPosition || 0);
@@ -739,11 +747,22 @@ app.get("/api/mis-posiciones", async (req, res) => {
           titulo:     meta.title || meta.slug || "Posición",
           slug:       meta.slug || "",
           outcome:    meta.outcome || "",
+          icono:      meta.team?.logo || meta.team?.longIcon || meta.icon || "",
           shares,
           costo:      parseFloat(costo.toFixed(2)),
           precioProm: shares > 0 ? parseFloat((costo / shares).toFixed(3)) : 0,
         };
       });
+
+    // Enriquecer cada posición con el precio actual del mercado + P&L
+    const posiciones = await Promise.all(posBase.map(async (p) => {
+      const precioActual = await pmPrecioActual(p.slug);
+      if (precioActual === null) return { ...p, precioActual: null, valorActual: null, pnl: null, pnlPct: null };
+      const valorActual = parseFloat((p.shares * precioActual).toFixed(2));
+      const pnl    = parseFloat((valorActual - p.costo).toFixed(2));
+      const pnlPct = p.costo > 0 ? parseFloat(((pnl / p.costo) * 100).toFixed(1)) : 0;
+      return { ...p, precioActual: parseFloat(precioActual.toFixed(3)), valorActual, pnl, pnlPct };
+    }));
 
     // activities (historial) — normalizado y legible
     const actArr = Array.isArray(actRes?.activities) ? actRes.activities : [];
@@ -760,6 +779,40 @@ app.get("/api/mis-posiciones", async (req, res) => {
   } catch(e) {
     console.error("Error posiciones:", e.message);
     res.json({ error: e.message, modoReal: true, posiciones: [], trades: [] });
+  }
+});
+
+// Comprar MÁS de una posición existente
+app.post("/api/mis-posiciones/comprar", async (req, res) => {
+  if (!modoReal) return res.status(400).json({ error: "Modo simulación" });
+  const { slug, monto } = req.body;
+  if (!slug) return res.status(400).json({ error: "Falta slug" });
+  try {
+    const prob = await pmPrecioActual(slug);
+    if (!prob) return res.status(400).json({ error: "No hay precio de mercado" });
+    const dolares  = parseFloat(monto) || CFG.stake;
+    const quantity = Math.max(1, Math.round(dolares / prob));
+    const r = await pmComprar(slug, prob, quantity);
+    console.log(`✅ Compra manual: ${slug} +$${dolares} @ ${(prob*100).toFixed(0)}%`);
+    setTimeout(actualizarBalanceReal, 2000);
+    res.json({ success: true, comprado: quantity, precio: prob, order: r });
+  } catch(e) {
+    res.status(500).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
+// Vender / cerrar una posición completa (sacar el dinero)
+app.post("/api/mis-posiciones/cerrar", async (req, res) => {
+  if (!modoReal) return res.status(400).json({ error: "Modo simulación" });
+  const { slug } = req.body;
+  if (!slug) return res.status(400).json({ error: "Falta slug" });
+  try {
+    const r = await pmCerrar(slug);
+    console.log(`✅ Venta manual (cierre): ${slug}`);
+    setTimeout(actualizarBalanceReal, 2000);
+    res.json({ success: true, order: r });
+  } catch(e) {
+    res.status(500).json({ error: e.response?.data?.message || e.message });
   }
 });
 
