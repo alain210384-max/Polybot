@@ -134,6 +134,34 @@ let copiandoSet      = new Set(); // wallets actualmente copiadas
 let ultimaActividad  = {};        // { wallet: Set<tradeId> } — IDs ya procesados
 let tradersCache     = [];        // cache del leaderboard
 
+// ── BALANCE REAL (de polymarket.us) ───────────────────────────────────────────
+let balanceCash      = null;  // efectivo disponible
+let balanceEnPos     = null;  // valor en posiciones abiertas (suma de costos)
+let balanceTotalReal = null;  // cash + posiciones = lo que ves en el teléfono
+let balanceBaseReal  = null;  // primer balance real visto = base para el ROI
+
+const actualizarBalanceReal = async () => {
+  if (!modoReal) return;
+  try {
+    const [bal, pos] = await Promise.all([
+      pmUs.get("/v1/account/balances"),
+      pmUs.get("/v1/portfolio/positions"),
+    ]);
+    const cash   = parseFloat(bal.balances?.[0]?.currentBalance || 0);
+    const posObj = (pos?.positions && typeof pos.positions === "object" && !Array.isArray(pos.positions)) ? pos.positions : {};
+    const enPos  = Object.values(posObj)
+      .filter(p => parseFloat(p.netPosition || 0) > 0)
+      .reduce((s, p) => s + parseFloat(p.cost?.value || 0), 0);
+    balanceCash      = parseFloat(cash.toFixed(2));
+    balanceEnPos     = parseFloat(enPos.toFixed(2));
+    balanceTotalReal = parseFloat((cash + enPos).toFixed(2));
+    if (balanceBaseReal === null) balanceBaseReal = balanceTotalReal; // base ROI = primer valor visto
+    console.log(`💰 Balance real: $${balanceTotalReal} (cash $${balanceCash} + posiciones $${balanceEnPos})`);
+  } catch(e) {
+    console.log("⚠️ Error leyendo balance real:", e.response?.status || e.message);
+  }
+};
+
 // ── CATEGORÍAS ────────────────────────────────────────────────────────────────
 // Nombres reales en Polymarket (verificados 2026-06-16):
 //   "What will S&P 500 (SPX) hit..." / "SPY (SPY) Up or Down..."
@@ -403,6 +431,10 @@ setInterval(async () => {
 // Cargar leaderboard al inicio
 fetchLeaderboard().then(t => { tradersCache = t; });
 
+// Balance real: al inicio y cada 30s
+actualizarBalanceReal();
+setInterval(actualizarBalanceReal, 30 * 1000);
+
 // ── FETCH MERCADOS REALES ─────────────────────────────────────────────────────
 const fetchMercadosReales = async () => {
   try {
@@ -603,14 +635,17 @@ cron.schedule("0 0 * * *", () => {
 // ── ENDPOINTS ─────────────────────────────────────────────────────────────────
 app.get("/api/status", (req, res) => {
   const wr = (ganados+perdidos) > 0 ? (ganados/(ganados+perdidos)*100) : 0;
+  // Balance mostrado = REAL de polymarket.us si está disponible; si no, el presupuesto
+  const balanceMostrado = (balanceTotalReal !== null) ? balanceTotalReal : balanceReal;
   res.json({
-    botActivo, circuitBreaker, balance: balanceReal,
+    botActivo, circuitBreaker, balance: balanceMostrado,
+    balanceCash, balanceEnPos, balanceTotalReal, balanceBase: balanceBaseReal,
     pnlHoy: parseFloat(pnlHoy.toFixed(2)),
     tradesHoy, ganados, perdidos,
     winRate: parseFloat(wr.toFixed(1)),
     presupuestoTotal: CFG.budget,
     presupuestoUsado: parseFloat(presupuestoUsado.toFixed(2)),
-    presupuestoRestante: parseFloat((CFG.budget - presupuestoUsado).toFixed(2)),
+    presupuestoRestante: (balanceCash !== null) ? balanceCash : parseFloat((CFG.budget - presupuestoUsado).toFixed(2)),
     stake: CFG.stake, minOdds: CFG.minOdds,
     mercadosEscaneados: mercadosActivos.length,
     unrealizedPnl: parseFloat(posicionesAbiertas.reduce((s,t) => s+(t.pnl||0), 0).toFixed(2)),

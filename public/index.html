@@ -477,8 +477,8 @@ function updateUI() {
   // Circuit breaker
   document.getElementById("circuitAlert").style.display = estado.circuitBreaker ? "block" : "none";
 
-  // ROI y ganancia — base = presupuesto REAL del backend (no el localStorage viejo)
-  const base = estado.presupuestoTotal || balanceInicial;
+  // ROI y ganancia — base = primer balance REAL visto (no el presupuesto fijo)
+  const base = estado.balanceBase || estado.presupuestoTotal || balanceInicial;
   const gananciaTotal = balance - base;
   const roi = base > 0 ? (gananciaTotal / base * 100).toFixed(1) : 0;
   if (document.getElementById("gananciaTotal")) {
