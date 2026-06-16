@@ -10,6 +10,10 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
 // ── CONFIG (valores fijos, sin depender del .env para filtros) ────────────────
 let CFG = {
   minOdds:      0.70,   // 70% mínimo - mercados serios
