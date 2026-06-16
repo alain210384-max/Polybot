@@ -30,6 +30,13 @@
   .btn-red { background: #FF456022; border: 1px solid #FF4560; border-radius: 8px; padding: 8px 16px; color: #FF4560; font-weight: 700; cursor: pointer; font-size: 13px; }
   .btn-green { background: #00D97E22; border: 1px solid #00D97E; border-radius: 8px; padding: 8px 16px; color: #00D97E; font-weight: 700; cursor: pointer; font-size: 13px; }
   .blink { animation: blink 1.5s infinite; }
+  /* Modal estructural */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(8,9,14,0.78); backdrop-filter: blur(4px); z-index: 2000; display: none; align-items: center; justify-content: center; animation: modalFade 0.2s ease; padding: 16px; }
+  .modal-box { background: #111318; border: 1px solid #1E2030; border-radius: 16px; padding: 22px; width: 100%; max-width: 360px; box-shadow: 0 24px 70px rgba(0,0,0,0.6); animation: modalPop 0.25s cubic-bezier(.2,.8,.2,1); }
+  .modal-input { width: 100%; background: #1A1C26; border: 1px solid #2A2D3A; border-radius: 10px; padding: 12px 14px 12px 30px; color: #E2E8F0; font-size: 18px; font-family: 'JetBrains Mono', monospace; outline: none; }
+  .modal-input:focus { border-color: #7C3AED; }
+  @keyframes modalFade { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalPop { from { opacity: 0; transform: scale(.92) translateY(10px) } to { opacity: 1; transform: scale(1) translateY(0) } }
   .pulse-ring { animation: pulseRing 2s ease-out infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
   @keyframes pulseRing { 0%{transform:scale(0.8);opacity:0.8} 100%{transform:scale(2);opacity:0} }
@@ -75,6 +82,26 @@
 
 <!-- TOAST -->
 <div id="toast" class="toast" style="display:none"></div>
+
+<!-- MODAL ESTRUCTURAL (comprar/vender/confirmar) -->
+<div id="modalBackdrop" class="modal-backdrop">
+  <div class="modal-box">
+    <div id="modalIcono" style="font-size:30px;margin-bottom:8px"></div>
+    <div id="modalTitulo" style="font-size:16px;font-weight:800;margin-bottom:6px;color:#E2E8F0"></div>
+    <div id="modalMensaje" style="font-size:13px;color:#94A3B8;line-height:1.5;margin-bottom:16px"></div>
+    <div id="modalInputWrap" style="margin-bottom:16px;display:none">
+      <div style="font-size:11px;color:#64748B;margin-bottom:6px">MONTO EN USD</div>
+      <div style="position:relative">
+        <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#64748B;font-size:18px">$</span>
+        <input id="modalInput" class="modal-input" type="number" inputmode="decimal" step="0.5" min="0">
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button id="modalCancel" class="btn-gray" style="flex:1;padding:12px">Cancelar</button>
+      <button id="modalOk" class="btn-purple" style="flex:1;padding:12px">Confirmar</button>
+    </div>
+  </div>
+</div>
 
 <!-- TOP NAV -->
 <div style="background:#111318;border-bottom:1px solid #1E2030;padding:0 20px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100">
@@ -853,8 +880,53 @@ async function fetchMisPosiciones() {
   }
 }
 
+// ── MODAL ESTRUCTURAL REUTILIZABLE ─────────────────────────────────────────
+// abrirModal({titulo, mensaje, icono, confirmTxt, confirmTipo, input, inputDefault})
+// → Promise: resuelve al valor del input (o true) al confirmar, null al cancelar
+function abrirModal(opts) {
+  return new Promise((resolve) => {
+    const o = opts || {};
+    const bd  = document.getElementById("modalBackdrop");
+    const ok  = document.getElementById("modalOk");
+    const cnl = document.getElementById("modalCancel");
+    const inp = document.getElementById("modalInput");
+    const iconoEl = document.getElementById("modalIcono");
+
+    iconoEl.textContent = o.icono || "";
+    iconoEl.style.display = o.icono ? "block" : "none";
+    document.getElementById("modalTitulo").textContent = o.titulo || "";
+    document.getElementById("modalMensaje").innerHTML = o.mensaje || "";
+    document.getElementById("modalInputWrap").style.display = o.input ? "block" : "none";
+    if (o.input) inp.value = o.inputDefault != null ? o.inputDefault : "";
+
+    ok.textContent = o.confirmTxt || "Confirmar";
+    ok.className = (o.confirmTipo === "red" ? "btn-red" : o.confirmTipo === "green" ? "btn-green" : "btn-purple");
+    ok.style.flex = "1"; ok.style.padding = "12px";
+
+    bd.style.display = "flex";
+    if (o.input) setTimeout(() => { inp.focus(); inp.select(); }, 60);
+
+    const cerrar = (val) => {
+      bd.style.display = "none";
+      ok.onclick = null; cnl.onclick = null; bd.onclick = null; inp.onkeydown = null;
+      resolve(val);
+    };
+    ok.onclick  = () => cerrar(o.input ? inp.value : true);
+    cnl.onclick = () => cerrar(null);
+    bd.onclick  = (e) => { if (e.target === bd) cerrar(null); };
+    if (o.input) inp.onkeydown = (e) => {
+      if (e.key === "Enter")  cerrar(inp.value);
+      if (e.key === "Escape") cerrar(null);
+    };
+  });
+}
+
 async function comprarMas(slug, titulo) {
-  const monto = prompt(`¿Cuántos dólares quieres comprar más de "${titulo}"?`, "3");
+  const monto = await abrirModal({
+    icono: "🟢", titulo: "Comprar más",
+    mensaje: `¿Cuánto quieres invertir en <b style="color:#E2E8F0">${titulo}</b>?`,
+    input: true, inputDefault: "3", confirmTxt: "Comprar", confirmTipo: "green",
+  });
   if (monto === null) return;
   const dolares = parseFloat(monto);
   if (!dolares || dolares <= 0) { showToast("Monto inválido", "neutral"); return; }
@@ -870,7 +942,12 @@ async function comprarMas(slug, titulo) {
 }
 
 async function venderPos(slug, titulo) {
-  if (!confirm(`¿Vender toda tu posición de "${titulo}" y sacar el dinero?`)) return;
+  const ok = await abrirModal({
+    icono: "🔴", titulo: "Vender posición",
+    mensaje: `¿Vender toda tu posición de <b style="color:#E2E8F0">${titulo}</b> y sacar el dinero?`,
+    confirmTxt: "Vender", confirmTipo: "red",
+  });
+  if (!ok) return;
   try {
     const r = await fetch(`${API}/mis-posiciones/cerrar`, {
       method: "POST", headers: { "Content-Type": "application/json" },
