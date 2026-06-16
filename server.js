@@ -30,56 +30,71 @@ let CFG = {
 const GAMMA_API = "https://gamma-api.polymarket.com";
 const DATA_API  = "https://data-api.polymarket.com";
 
-// ── CLIENTE CLOB (trading real + leer posiciones) ────────────────────────────
-let clobClient    = null;
-let walletAddress = process.env.POLYMARKET_WALLET_ADDRESS || null;
-let modoReal      = false;
+// ── CLIENTE POLYMARKET.US (API real con Ed25519 corregido) ────────────────────
+const ed25519 = require("@noble/ed25519");
+try {
+  const { sha512 } = require("@noble/hashes/sha512");
+  ed25519.etc.sha512Sync = (...m) => sha512(...m);
+} catch(_) {}
 
+const PM_US_API     = "https://api.polymarket.us";
+const PM_US_GATEWAY = "https://gateway.polymarket.us";
+
+// Firma Ed25519: maneja keys de 32, 64 o 65 bytes
+// Mensaje: timestamp + METHOD + path  (sin body — igual que polymarket-us package)
+async function pmUsSign(secretBase64, ts, method, path) {
+  const msg  = ts + method.toUpperCase() + path;
+  const raw  = new Uint8Array(Buffer.from(secretBase64, "base64")); // Buffer acepta + y /
+  // 64 bytes = seed(32)+pubkey(32) → tomar primeros 32 | 65 bytes = prefijo+seed+pubkey → slice(0,32)
+  const seed = raw.length > 32 ? raw.slice(0, 32) : raw;
+  const sig  = await ed25519.signAsync(new TextEncoder().encode(msg), seed);
+  return Buffer.from(sig).toString("base64");
+}
+
+// Cliente polymarket.us
+const pmUs = {
+  keyId:  process.env.POLYMARKET_KEY_ID     || "",
+  secret: process.env.POLYMARKET_SECRET_KEY || "",
+
+  async _headers(method, path) {
+    if (!this.keyId || !this.secret) return {};
+    const ts  = Date.now().toString();
+    const sig = await pmUsSign(this.secret, ts, method, path);
+    return { "X-PM-Access-Key": this.keyId, "X-PM-Timestamp": ts, "X-PM-Signature": sig };
+  },
+
+  async get(path, authed = true, params = {}) {
+    const url = new URL(path, authed ? PM_US_API : PM_US_GATEWAY);
+    Object.entries(params).forEach(([k,v]) => v !== undefined && url.searchParams.set(k, v));
+    const headers = authed ? await this._headers("GET", path) : {};
+    const r = await axios.get(url.toString(), { headers, timeout: 15000 });
+    return r.data;
+  },
+
+  async post(path, body = {}) {
+    const bodyStr = JSON.stringify(body);
+    const headers = {
+      ...await this._headers("POST", path, bodyStr),
+      "Content-Type": "application/json",
+    };
+    const r = await axios.post(PM_US_API + path, body, { headers, timeout: 15000 });
+    return r.data;
+  },
+};
+
+let modoReal = !!(process.env.POLYMARKET_KEY_ID && process.env.POLYMARKET_SECRET_KEY);
+if (modoReal) {
+  console.log(`✅ Cliente polymarket.us listo (${process.env.POLYMARKET_KEY_ID?.slice(0,8)}…) — MODO REAL 💰`);
+} else {
+  console.log("⚠️  Sin credenciales — MODO SIMULACIÓN");
+}
+
+// CLOB client (solo para leer mercados públicos)
+let clobClient = null;
 try {
   const { ClobClient } = require("@polymarket/clob-client-v2");
-
-  const creds = {
-    key:        process.env.POLYMARKET_KEY_ID        || "",
-    secret:     process.env.POLYMARKET_SECRET_KEY    || "",
-    passphrase: process.env.POLYMARKET_PASSPHRASE    || "",
-  };
-
-  let signer = null;
-
-  if (process.env.POLYMARKET_PRIVATE_KEY) {
-    const { createWalletClient, http }  = require("viem");
-    const { privateKeyToAccount }       = require("viem/accounts");
-    const { polygon }                   = require("viem/chains");
-
-    const rawKey = process.env.POLYMARKET_PRIVATE_KEY;
-    const privKey = rawKey.startsWith("0x") ? rawKey : "0x" + rawKey;
-    const account = privateKeyToAccount(privKey);
-    walletAddress = account.address;
-
-    signer = createWalletClient({
-      account,
-      chain:     polygon,
-      transport: http("https://polygon-rpc.com"),
-    });
-
-    modoReal = true;
-    console.log(`✅ Wallet: ${walletAddress.slice(0,8)}...${walletAddress.slice(-4)} — MODO REAL 💰`);
-  } else {
-    console.log("⚠️  POLYMARKET_PRIVATE_KEY no configurada — MODO SIMULACIÓN");
-    console.log("   Para operar con dinero real, agrega POLYMARKET_PRIVATE_KEY en .env");
-  }
-
-  clobClient = new ClobClient({
-    host:   "https://clob.polymarket.com",
-    chain:  137,
-    signer,
-    creds,
-  });
-
-  console.log("✅ CLOB Client conectado");
-} catch(e) {
-  console.log("⚠️ ClobClient no disponible:", e.message);
-}
+  clobClient = new ClobClient({ host: "https://clob.polymarket.com", chain: 137 });
+} catch(e) { /* opcional */ }
 
 // ── ESTADO GLOBAL ─────────────────────────────────────────────────────────────
 let botActivo          = true;
@@ -225,19 +240,17 @@ const ejecutarCopyTrade = async (actividad, wallet) => {
   const shares  = parseFloat((CFG.stake / prob).toFixed(2));
   const ganancia = parseFloat((shares - CFG.stake).toFixed(2));
 
-  if (polyClient && slug) {
+  if (modoReal && slug) {
     try {
-      await polyClient.orders.create({
+      await pmUs.post("/v1/orders", {
         marketSlug: slug,
-        intent:     "ORDER_INTENT_BUY_LONG",
-        type:       "ORDER_TYPE_LIMIT",
-        price:      { value: prob.toFixed(2), currency: "USD" },
-        quantity:   Math.floor(CFG.stake / prob),
-        tif:        "TIME_IN_FORCE_GOOD_TILL_CANCEL",
+        side:       "BUY",
+        price:      parseFloat(prob.toFixed(2)),
+        size:       parseFloat(CFG.stake.toFixed(2)),
       });
       console.log(`✅ COPY TRADE ejecutado: ${title} @ ${(prob*100).toFixed(0)}%`);
     } catch(e) {
-      console.log(`⚠️ Error ejecutando copy trade: ${e.message}`);
+      console.log(`⚠️ Error copy trade: ${e.response?.data?.message || e.message}`);
     }
   }
 
@@ -446,22 +459,22 @@ const ejecutarTrade = async (mercado, stake, fuerza) => {
   const shares   = parseFloat((stake / mercado.prob).toFixed(2));
   const ganancia = parseFloat((shares - stake).toFixed(2));
 
-  // Ejecutar orden REAL via CLOB si tenemos private key
-  if (modoReal && clobClient && mercado.clobTokenId) {
+  // Ejecutar orden REAL via polymarket.us
+  if (modoReal && mercado.slug) {
     try {
       console.log(`🔄 Ejecutando orden REAL: ${mercado.titulo} — $${stake} @ ${(mercado.prob*100).toFixed(0)}%`);
-      const orderResp = await clobClient.createAndPostOrder({
-        tokenID: mercado.clobTokenId,
-        price:   mercado.prob,
-        side:    "BUY",
-        size:    shares,
+      const orderResp = await pmUs.post("/v1/orders", {
+        marketSlug: mercado.slug,
+        side:       "BUY",
+        price:      parseFloat(mercado.prob.toFixed(2)),
+        size:       parseFloat(stake.toFixed(2)),
       });
-      console.log(`✅ ORDEN REAL EJECUTADA: orderId=${orderResp?.orderID || orderResp?.id || "?"}`);
+      console.log(`✅ ORDEN REAL: ${JSON.stringify(orderResp).slice(0,120)}`);
     } catch(e) {
-      console.log(`⚠️ Error orden real: ${e.message}`);
+      console.log(`⚠️ Error orden real: ${e.response?.data?.message || e.message}`);
     }
   } else if (!modoReal) {
-    console.log(`📊 SIMULACIÓN: ${mercado.titulo} — agrega POLYMARKET_PRIVATE_KEY para trades reales`);
+    console.log(`📊 SIMULACIÓN: ${mercado.titulo}`);
   }
 
   const trade = {
@@ -518,7 +531,7 @@ app.get("/api/status", (req, res) => {
     unrealizedPnl: parseFloat(posicionesAbiertas.reduce((s,t) => s+(t.pnl||0), 0).toFixed(2)),
     apiConectada: !!CFG.keyId,
     modoReal,
-    wallet: walletAddress ? walletAddress.slice(0,8)+"..."+walletAddress.slice(-4) : null,
+    keyIdActivo: modoReal ? pmUs.keyId?.slice(0,8)+"…" : null,
     tradersCopiados: copiandoSet.size,
   });
 });
@@ -582,24 +595,19 @@ app.post("/api/trades/:id/aumentar", (req, res) => {
   res.json({ success: true, nuevoStake: trade.stake, nuevoPotencial: trade.potencial });
 });
 
-// ── POSICIONES REALES DESDE POLYMARKET ───────────────────────────────────────
+// ── POSICIONES REALES DESDE POLYMARKET.US ────────────────────────────────────
 app.get("/api/mis-posiciones", async (req, res) => {
-  if (!modoReal || !clobClient) {
-    return res.json({
-      error:      "Modo simulación — agrega POLYMARKET_PRIVATE_KEY en Render para ver posiciones reales",
-      modoReal:   false,
-      posiciones: [],
-      trades:     [],
-    });
+  if (!modoReal) {
+    return res.json({ error: "Sin credenciales — modo simulación", modoReal: false, posiciones: [], trades: [] });
   }
   try {
-    const [ordersRes, tradesRes] = await Promise.all([
-      clobClient.getOpenOrders().catch(e => { console.log("getOpenOrders err:", e.message); return []; }),
-      clobClient.getTrades({ maker_address: walletAddress }).catch(e => { console.log("getTrades err:", e.message); return []; }),
+    const [posRes, actRes] = await Promise.all([
+      pmUs.get("/v1/portfolio/positions").catch(e => { console.log("positions err:", e.message); return { data: [] }; }),
+      pmUs.get("/v1/portfolio/activities", true, { limit: 30 }).catch(e => { console.log("activities err:", e.message); return { data: [] }; }),
     ]);
-    const ordenes = Array.isArray(ordersRes) ? ordersRes : (ordersRes?.data || []);
-    const trades  = Array.isArray(tradesRes) ? tradesRes : (tradesRes?.data || []);
-    res.json({ modoReal: true, wallet: walletAddress, posiciones: ordenes.slice(0,20), trades: trades.slice(0,30) });
+    const posiciones = posRes?.data || posRes || [];
+    const trades     = actRes?.data  || actRes  || [];
+    res.json({ modoReal: true, keyId: pmUs.keyId?.slice(0,8)+"…", posiciones: posiciones.slice(0,20), trades: trades.slice(0,30) });
   } catch(e) {
     console.error("Error posiciones:", e.message);
     res.json({ error: e.message, modoReal: true, posiciones: [], trades: [] });
