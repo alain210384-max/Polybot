@@ -262,7 +262,7 @@
           <span style="font-size:14px;font-weight:700">🔗 Mis Posiciones en Polymarket</span>
           <button class="btn-gray" style="font-size:10px;padding:4px 10px" onclick="fetchMisPosiciones()">↻ Sync</button>
         </div>
-        <div id="misPosicionesList" style="max-height:240px;overflow-y:auto">
+        <div id="misPosicionesList" style="max-height:600px;overflow-y:auto">
           <div style="text-align:center;color:#64748B;padding:20px;font-size:12px">Cargando...</div>
         </div>
       </div>
@@ -849,38 +849,73 @@ async function fetchMisPosiciones() {
     }
 
     el.innerHTML = posiciones.slice(0, 15).map(p => {
-      const outColor = (p.outcome || "").toLowerCase() === "yes" ? "#00D97E" : "#FF4560";
-      const compra   = p.precioProm ? `${(p.precioProm*100).toFixed(0)}¢` : "–";
-      const ahora    = (p.precioActual != null) ? `${(p.precioActual*100).toFixed(0)}¢` : "–";
-      const pnl      = p.pnl;
-      const pnlPct   = p.pnlPct;
-      const pnlColor = pnl == null ? "#64748B" : (pnl >= 0 ? "#00D97E" : "#FF4560");
-      const pnlTxt   = pnl == null ? "" : `${pnl >= 0 ? "+" : ""}$${pnl} (${pnl >= 0 ? "+" : ""}${pnlPct}%)`;
-      const icono    = p.icono
-        ? `<img src="${p.icono}" style="width:22px;height:22px;border-radius:50%;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'">`
-        : `<div style="width:22px;height:22px;border-radius:50%;background:#1E2030;flex-shrink:0"></div>`;
-      const slugJS = (p.slug || "").replace(/'/g, "\\'");
+      const outColor  = (p.outcome || "").toLowerCase() === "yes" ? "#00D97E" : "#FF4560";
+      const compraNum = p.precioProm ? Math.round(p.precioProm * 100) : null;
+      const ahoraNum  = p.precioActual != null ? Math.round(p.precioActual * 100) : null;
+      const pnl       = p.pnl;
+      const pnlPct    = p.pnlPct;
+      const pnlColor  = pnl == null ? "#64748B" : (pnl >= 0 ? "#00D97E" : "#FF4560");
+      const pnlTxt    = pnl == null ? "–" : `${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(2)}`;
+      const pnlPctTxt = pnlPct == null ? "" : ` (${pnlPct >= 0 ? "+" : ""}${pnlPct}%)`;
+      const icono     = p.icono
+        ? `<img src="${p.icono}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'">`
+        : `<div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#1E2030,#2A2D3A);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px">⬡</div>`;
+      const slugJS    = (p.slug || "").replace(/'/g, "\\'");
+
+      // Barra de mercado
+      const barPct    = ahoraNum != null ? ahoraNum : 0;
+      const barColor  = ahoraNum == null ? "#64748B" : (ahoraNum >= 70 ? "#00D97E" : ahoraNum >= 50 ? "#F59E0B" : "#FF4560");
+      const arrow     = ahoraNum == null || compraNum == null ? "" :
+                        ahoraNum > compraNum ? `<span style="color:#00D97E;font-size:11px">▲</span>` :
+                        ahoraNum < compraNum ? `<span style="color:#FF4560;font-size:11px">▼</span>` :
+                        `<span style="color:#64748B;font-size:11px">━</span>`;
+      const compraMarker = compraNum != null
+        ? `<div style="position:absolute;top:0;width:2px;height:100%;background:#9D5CF6;border-radius:1px;left:${Math.min(compraNum,99)}%"></div>`
+        : "";
+
       return `
-      <div style="padding:10px 0;border-bottom:1px solid #1E2030;font-size:12px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <div style="padding:12px 0;border-bottom:1px solid #1E2030">
+        <!-- Header: icono + titulo + outcome -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
           ${icono}
           <div style="flex:1;overflow:hidden">
-            <div style="color:#E2E8F0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.titulo}</div>
-            <div style="font-size:10px"><span style="color:${outColor};font-weight:700">${p.outcome || "OPEN"}</span> · <span class="mono" style="color:#64748B">${p.shares} sh</span></div>
+            <div style="color:#E2E8F0;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.titulo}</div>
+            <div style="font-size:10px;margin-top:1px">
+              <span style="color:${outColor};font-weight:700">${p.outcome || "OPEN"}</span>
+              <span style="color:#64748B"> · ${p.shares} shares</span>
+            </div>
           </div>
-          <div style="text-align:right">
-            <div class="mono" style="color:#9D5CF6;font-weight:700">${ahora}</div>
-            <div class="mono" style="font-size:10px;color:${pnlColor}">${pnlTxt}</div>
+          <!-- PnL en esquina -->
+          <div style="text-align:right;flex-shrink:0">
+            <div class="mono" style="font-size:13px;font-weight:800;color:${pnlColor}">${pnlTxt}</div>
+            <div style="font-size:10px;color:${pnlColor};opacity:0.75">${pnlPctTxt}</div>
           </div>
         </div>
-        <div style="display:flex;gap:12px;color:#64748B;font-size:10px;margin-bottom:6px">
-          <span>Compra: <span class="mono">${compra}</span></span>
-          <span>Costo: <span class="mono" style="color:#E2E8F0">$${p.costo}</span></span>
-          <span>Valor: <span class="mono" style="color:#E2E8F0">$${p.valorActual != null ? p.valorActual : "–"}</span></span>
+
+        <!-- BLOQUE MERCADO EN VIVO — protagonista -->
+        <div style="background:#0D0F17;border-radius:10px;padding:10px 12px;margin-bottom:8px;border:1px solid #1E2030">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <span style="font-size:10px;color:#64748B;letter-spacing:1px;font-weight:700">MERCADO AHORA</span>
+            <div style="display:flex;align-items:center;gap:4px">
+              ${arrow}
+              <span class="mono" style="font-size:26px;font-weight:900;color:${barColor};line-height:1">${ahoraNum != null ? ahoraNum + "%" : "–"}</span>
+            </div>
+          </div>
+          <!-- barra probabilidad -->
+          <div style="position:relative;background:#1E2030;border-radius:4px;height:8px;overflow:hidden">
+            <div style="width:${barPct}%;background:${barColor};height:100%;border-radius:4px;transition:width 0.5s"></div>
+            ${compraMarker}
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:#64748B">
+            <span>Compré: <span class="mono" style="color:#9D5CF6">${compraNum != null ? compraNum + "%" : "–"}</span></span>
+            <span>Valor: <span class="mono" style="color:#E2E8F0">$${p.valorActual != null ? p.valorActual : "–"}</span> · Costo: <span class="mono">$${p.costo}</span></span>
+          </div>
         </div>
+
+        <!-- Botones -->
         <div style="display:flex;gap:6px">
-          <button onclick="comprarMas('${slugJS}','${p.titulo.replace(/'/g,"")}')" style="flex:1;padding:6px;border:none;border-radius:6px;background:#16261c;color:#00D97E;font-weight:700;cursor:pointer;font-size:11px">+ Comprar</button>
-          <button onclick="venderPos('${slugJS}','${p.titulo.replace(/'/g,"")}',${p.shares})" style="flex:1;padding:6px;border:none;border-radius:6px;background:#2a1518;color:#FF4560;font-weight:700;cursor:pointer;font-size:11px">Vender</button>
+          <button onclick="comprarMas('${slugJS}','${p.titulo.replace(/'/g,"")}')" style="flex:1;padding:7px;border:none;border-radius:8px;background:#16261c;color:#00D97E;font-weight:700;cursor:pointer;font-size:11px">+ Comprar</button>
+          <button onclick="venderPos('${slugJS}','${p.titulo.replace(/'/g,"")}',${p.shares})" style="flex:1;padding:7px;border:none;border-radius:8px;background:#2a1518;color:#FF4560;font-weight:700;cursor:pointer;font-size:11px">Vender</button>
         </div>
       </div>`;
     }).join("");
