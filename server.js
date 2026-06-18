@@ -192,85 +192,84 @@ const DEPORTIVOS = ["BEISBOL","NBA","NFL","NHL","SOCCER","UFC","SPORTS","TENIS",
 const esDeporteEnVivo  = (cat, prob, dias) => DEPORTIVOS.includes(cat) && dias <= 2 && prob >= 0.55;
 const esIndiceIntraday = (cat, dias)       => ["SPX","NQ","DOW","VIX"].includes(cat) && dias <= 1;
 
-// ── SISTEMA 1: SCREENER — escanea 500+ mercados ────────────────────────────────
+// ── SISTEMA 1: SCREENER — escanea todos los mercados de polymarket.us ──────────
 const fetchMercadosReales = async () => {
   try {
-    console.log("\n🔍 Escaneando mercados...");
-    const H = { "Accept":"application/json" };
-    const get = (params) => axios.get(`${GAMMA_API}/markets`, { params, timeout:20000, headers:H })
-      .then(r => Array.isArray(r.data) ? r.data : (r.data?.markets || r.data?.data || []))
-      .catch(() => []);
+    console.log("\n🔍 Escaneando polymarket.us...");
+    const PAGE = 100, BATCH = 20;
 
-    // 5 páginas de 100 + fetch especial ordenado por endDate (live sports)
-    const [p1,p2,p3,p4,p5,live] = await Promise.all([
-      get({active:true,closed:false,limit:100,offset:0}),
-      get({active:true,closed:false,limit:100,offset:100}),
-      get({active:true,closed:false,limit:100,offset:200}),
-      get({active:true,closed:false,limit:100,offset:300}),
-      get({active:true,closed:false,limit:100,offset:400}),
-      get({active:true,closed:false,limit:100,order:"endDate",ascending:true}),
-    ]);
+    // Pagina en batches de 20 requests paralelos hasta agotar todos los mercados
+    const allMarkets = [];
+    for (let off = 0; ; off += PAGE * BATCH) {
+      const offs = Array.from({length: BATCH}, (_, i) => off + i * PAGE);
+      const pages = await Promise.all(offs.map(o =>
+        pmUs.get("/v1/markets", true, { limit: PAGE, offset: o, active: true, closed: false })
+          .then(d => d?.markets || []).catch(() => [])
+      ));
+      const batch = pages.flat();
+      allMarkets.push(...batch);
+      // Para cuando la última página del batch devuelve menos de PAGE resultados
+      const lastFull = pages.find((p, i) => i === pages.length - 1);
+      if (batch.length < PAGE * BATCH || (lastFull && lastFull.length < PAGE)) break;
+    }
+    console.log(`📊 ${allMarkets.length} mercados descargados`);
 
-    const seen = new Set();
-    const markets = [...p1,...p2,...p3,...p4,...p5,...live].filter(m => {
-      const id = m.id||m.conditionId||m.slug; if (!id||seen.has(id)) return false; seen.add(id); return true;
-    });
-    console.log(`📊 Únicos: ${markets.length}`);
-
+    const ahora = Date.now();
+    const seen  = new Set();
     const validos = [];
-    for (const m of markets) {
-      let prob = 0;
-      if (m.outcomePrices) { const x = String(m.outcomePrices).match(/([0-9]+\.?[0-9]*)/); prob = x ? parseFloat(x[1]) : 0; }
-      if (!prob && m.bestBid)    prob = parseFloat(m.bestBid)   || 0;
-      if (!prob && m.lastPrice)  prob = parseFloat(m.lastPrice) || 0;
+
+    for (const m of allMarkets) {
+      if (!m.active || m.closed) continue;
+      const uid = String(m.id || m.slug);
+      if (seen.has(uid)) continue;
+      seen.add(uid);
+
+      // Solo compramos el lado LONG (YES). Precio = probabilidad actual
+      const longSide = m.marketSides?.find(s => s.long === true);
+      if (!longSide) continue;
+      const prob = parseFloat(longSide.price || 0);
       if (!prob || prob <= 0 || prob >= 1) continue;
 
-      const liquidez    = parseFloat(m.liquidity||m.liquidityNum||0);
-      const volumen     = parseFloat(m.volume||m.volumeNum||0);
-      const categoria   = mapCategoria(m.tags||[], m.question||"", m.slug||"");
-      const resolveDate = m.endDate||m.resolutionDate||m.endDateIso;
-      const diasRestantes = resolveDate ? Math.ceil((new Date(resolveDate)-Date.now())/86400000) : 30;
+      const gameStartMs  = m.gameStartTime ? new Date(m.gameStartTime).getTime() : null;
+      const endMs        = m.endDate       ? new Date(m.endDate).getTime()       : null;
+      const diasRestantes = endMs ? Math.ceil((endMs - ahora) / 86400000) : 30;
+      // EN VIVO = juego ya empezó Y resuelve en ≤2 días (no captura eventos de meses)
+      const enVivo = !!(gameStartMs && gameStartMs < ahora && endMs && endMs > ahora && diasRestantes <= 2);
 
-      const enVivo   = esDeporteEnVivo(categoria, prob, diasRestantes);
-      const intraday = esIndiceIntraday(categoria, diasRestantes);
+      const categoria = mapCategoria(m.tags || [], m.question || "", m.slug || "");
 
       if (enVivo) {
-        if (prob < 0.55 || liquidez < 100) continue;
-        console.log(`⚡ EN VIVO: ${m.question?.slice(0,50)} | ${(prob*100).toFixed(0)}%`);
-      } else if (intraday) {
-        if (prob < 0.65 || liquidez < 200) continue;
+        if (prob < 0.55) continue;
+        console.log(`⚡ EN VIVO: ${m.question?.slice(0,55)} | ${(prob*100).toFixed(0)}%`);
       } else {
         if (prob < CFG.minOdds || prob > CFG.maxOdds) continue;
-        if (liquidez < CFG.minLiquidity)              continue;
-        if (diasRestantes < 1 || diasRestantes > 90)  continue;
+        if (diasRestantes < 0 || diasRestantes > 90) continue;
       }
 
-      let clobTokenId = null;
-      try { const ids = typeof m.clobTokenIds==="string" ? JSON.parse(m.clobTokenIds) : (m.clobTokenIds||[]); clobTokenId=ids[0]||null; } catch(_) {}
-
       validos.push({
-        id: m.id||m.conditionId||m.slug, slug:m.slug, conditionId:m.conditionId, clobTokenId,
-        titulo: m.question||m.title||"Sin título", categoria,
-        prob: parseFloat(prob.toFixed(4)), volumen:Math.round(volumen), liquidez:Math.round(liquidez),
-        diasRestantes, enVivo, intraday, stake:CFG.stake,
-        tradersCount: Math.floor(Math.random()*10)+1,
-        fuerza: enVivo?"🔴 EN VIVO":intraday?"📈 INTRADAY":prob>=0.85?"MÁXIMA":prob>=0.78?"FUERTE":prob>=0.72?"MEDIA":"DÉBIL",
+        id: uid, slug: m.slug,
+        titulo:   m.question || "Sin título",
+        outcome:  longSide.description || "YES",
+        categoria,
+        prob: parseFloat(prob.toFixed(4)),
+        diasRestantes, enVivo, stake: CFG.stake,
+        fuerza: enVivo ? "🔴 EN VIVO"
+               : prob >= 0.85 ? "MÁXIMA"
+               : prob >= 0.78 ? "FUERTE"
+               : prob >= 0.72 ? "MEDIA" : "DÉBIL",
       });
     }
 
+    validos.sort((a,b) => (b.enVivo - a.enVivo) || (b.prob - a.prob));
     mercadosActivos = validos;
-    console.log(`✅ Válidos: ${validos.length}`);
+    console.log(`✅ Válidos: ${validos.length} (${validos.filter(m=>m.enVivo).length} EN VIVO)`);
 
-    if (validos.length > 0) {
-      const ordenadas = [...validos].sort((a,b) => {
-        if (a.enVivo&&!b.enVivo) return -1; if (!a.enVivo&&b.enVivo) return 1; return b.prob-a.prob;
-      });
-      const nuevas = ordenadas.filter(m =>
-        !senalesPendientes.find(s=>s.id===m.id) && !posicionesAbiertas.find(p=>p.marketId===m.id)
-      );
-      senalesPendientes = [...nuevas,...senalesPendientes].slice(0,100);
-      console.log(`📡 ${nuevas.length} nuevas señales (${nuevas.filter(s=>s.enVivo).length} en vivo)`);
-    }
+    const nuevas = validos.filter(m =>
+      !senalesPendientes.find(s => s.id === m.id) &&
+      !posicionesAbiertas.find(p => p.marketId === m.id)
+    );
+    senalesPendientes = [...nuevas, ...senalesPendientes].slice(0, 300);
+    console.log(`📡 ${nuevas.length} nuevas señales`);
     return validos;
   } catch(err) { console.error("❌ Scan err:", err.message); return []; }
 };
@@ -315,45 +314,28 @@ const ejecutarTrade = async (mercado, stake, fuerza) => {
   return trade;
 };
 
-// Auto-buy Sistema 1: cada 3 min compra hasta 5 señales válidas
+// Auto-buy Sistema 1: cada 3 min compra señales válidas de polymarket.us
 const autoComprarSenales = async () => {
   if (!botActivo || circuitBreaker || !CFG.autoComprar) return;
   const disponible = balanceCash !== null ? balanceCash : (CFG.budget - presupuestoUsado);
-  if (disponible < CFG.stake) { console.log(`💸 Sin cash ($${disponible}) para auto-comprar`); return; }
+  if (disponible < CFG.stake) { console.log(`💸 Sin cash ($${disponible})`); return; }
 
   const candidatos = senalesPendientes.filter(s =>
-    s.slug &&
-    !posicionesAbiertas.find(p => p.marketId===s.id) &&
-    posicionesAbiertas.length < maxPos()
+    s.slug && !posicionesAbiertas.find(p => p.marketId === s.id) && posicionesAbiertas.length < maxPos()
   );
   if (!candidatos.length) return;
   console.log(`🔎 Auto-buy: ${candidatos.length} candidatos`);
 
-  let compradas = 0, descartadas = 0;
-  for (const s of candidatos.slice(0, 8)) {
+  let compradas = 0;
+  for (const s of candidatos.slice(0, 5)) {
     if (posicionesAbiertas.length >= maxPos()) break;
-
-    // Verificar que el mercado existe en polymarket.us antes de intentar comprar
-    const bbo = await pmBbo(s.slug);
-    if (!bbo.bid && !bbo.ask && !bbo.last) {
-      // No existe en polymarket.us — quitar de la cola para no reintentar
-      senalesPendientes = senalesPendientes.filter(x => String(x.id) !== String(s.id));
-      descartadas++;
-      continue;
-    }
-
     const t = await ejecutarTrade(s, CFG.stake, s.fuerza);
-    if (t) {
-      compradas++;
-      senalesPendientes = senalesPendientes.filter(x => String(x.id) !== String(s.id));
-      await new Promise(r => setTimeout(r, 700));
-    } else {
-      // Orden fallida — quitar de cola para no reintentar indefinidamente
-      senalesPendientes = senalesPendientes.filter(x => String(x.id) !== String(s.id));
-      descartadas++;
-    }
+    // Sacar de la cola tanto si compró como si falló (evitar reintentos infinitos)
+    senalesPendientes = senalesPendientes.filter(x => x.id !== s.id);
+    if (t) compradas++;
+    await new Promise(r => setTimeout(r, 700));
   }
-  console.log(`🤖 Sistema1: ${compradas} compradas, ${descartadas} descartadas`);
+  console.log(`🤖 Sistema1: ${compradas} compradas`);
 };
 
 // ── SISTEMA 2: COPY TRADING ────────────────────────────────────────────────────
