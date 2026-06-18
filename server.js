@@ -4,6 +4,7 @@ const cors    = require("cors");
 const path    = require("path");
 const cron    = require("node-cron");
 const axios   = require("axios");
+const fs      = require("fs");
 
 const app = express();
 app.use(cors());
@@ -131,7 +132,11 @@ let senalesPendientes  = [];
 let posicionesAbiertas = [];
 let historialTrades    = [];
 let mercadosActivos    = [];
-let historialBalance   = [{ dia: "Inicio", valor: CFG.budget }];
+const HISTORY_FILE = path.join(__dirname, "balance-history.json");
+let historialBalance = (() => {
+  try { return JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8")); } catch(_) {}
+  return [{ dia: "Inicio", valor: CFG.budget }];
+})();
 
 // Copy trading
 let copiandoSet     = new Set();
@@ -143,6 +148,10 @@ let balanceCash      = null;
 let balanceEnPos     = null;
 let balanceTotalReal = null;
 let balanceBaseReal  = null;
+
+const guardarHistorialBalance = () => {
+  try { fs.writeFileSync(HISTORY_FILE, JSON.stringify(historialBalance.slice(-90))); } catch(_) {}
+};
 
 const actualizarBalanceReal = async () => {
   if (!modoReal) return;
@@ -160,7 +169,57 @@ const actualizarBalanceReal = async () => {
     balanceTotalReal = parseFloat((cash + enPos).toFixed(2));
     if (balanceBaseReal === null) balanceBaseReal = balanceTotalReal;
     console.log(`💰 Balance: $${balanceTotalReal} (cash $${balanceCash} + pos $${balanceEnPos})`);
+
+    // Guardar punto de balance diario
+    const hoy = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"2-digit" });
+    const last = historialBalance[historialBalance.length - 1];
+    if (!last || last.dia !== hoy) {
+      historialBalance.push({ dia: hoy, valor: balanceTotalReal });
+      guardarHistorialBalance();
+    } else if (Math.abs((last.valor || 0) - balanceTotalReal) >= 0.5) {
+      last.valor = balanceTotalReal;
+      guardarHistorialBalance();
+    }
   } catch(e) { console.log("⚠️ Balance err:", e.response?.status || e.message); }
+};
+
+// Sincroniza posicionesAbiertas con las posiciones reales de polymarket.us al arrancar
+const sincronizarPosiciones = async () => {
+  if (!modoReal) return;
+  try {
+    const pos    = await pmUs.get("/v1/portfolio/positions");
+    const posObj = (pos?.positions && typeof pos.positions==="object" && !Array.isArray(pos.positions)) ? pos.positions : {};
+    const abiertas = Object.values(posObj).filter(p => parseFloat(p.netPosition||0) > 0);
+    let nuevas = 0;
+    for (const p of abiertas) {
+      const meta   = p.marketMetadata || {};
+      const slug   = meta.slug || "";
+      if (!slug || posicionesAbiertas.find(x => x.slug === slug)) continue;
+      const shares = parseFloat(p.netPosition || 0);
+      const costo  = parseFloat(p.cost?.value || 0);
+      const avgPx  = parseFloat(p.avgPx || 0) || (shares > 0 ? costo / shares : 0);
+      posicionesAbiertas.push({
+        id:          Date.now() + Math.random(),
+        marketId:    slug,
+        slug,
+        titulo:      meta.title || slug,
+        categoria:   mapCategoria([], meta.title || "", slug),
+        oddsEntrada: parseFloat(avgPx.toFixed(3)),
+        oddsActual:  parseFloat(avgPx.toFixed(3)),
+        stake:       parseFloat(costo.toFixed(2)),
+        shares,
+        potencial:   shares,
+        ganancia:    parseFloat((shares - costo).toFixed(2)),
+        pnl:         0,
+        fuerza:      "SYNC",
+        estado:      "abierto",
+        abiertaEn:   p.updateTime || new Date().toISOString(),
+      });
+      presupuestoUsado = parseFloat((presupuestoUsado + costo).toFixed(2));
+      nuevas++;
+    }
+    if (nuevas > 0) console.log(`🔄 ${nuevas} posiciones sincronizadas ($${presupuestoUsado.toFixed(2)} invertidos)`);
+  } catch(e) { console.log("⚠️ Sync posiciones:", e.message); }
 };
 
 // ── CATEGORÍAS ─────────────────────────────────────────────────────────────────
@@ -488,12 +547,15 @@ const copiarTrades = async () => {
 };
 
 // ── TIMERS ─────────────────────────────────────────────────────────────────────
-fetchMercadosReales().then(() => setTimeout(autoComprarSenales, 5000)); // compra 5s tras primer scan
-setInterval(fetchMercadosReales,  5*60*1000);  // scan cada 5 min
-setInterval(autoComprarSenales,   3*60*1000);  // Sistema1: compra cada 3 min
-setInterval(copiarTrades,         2*60*1000);  // Sistema2: copy cada 2 min
-actualizarBalanceReal();
-setInterval(actualizarBalanceReal,  30*1000);  // balance cada 30s
+// Al arrancar: sincroniza posiciones reales PRIMERO, luego escanea y compra
+actualizarBalanceReal().then(() => sincronizarPosiciones()).then(() =>
+  fetchMercadosReales().then(() => setTimeout(autoComprarSenales, 5000))
+);
+setInterval(fetchMercadosReales,  5*60*1000);   // scan cada 5 min
+setInterval(autoComprarSenales,   3*60*1000);   // Sistema1: compra cada 3 min
+setInterval(copiarTrades,         2*60*1000);   // Sistema2: copy cada 2 min
+setInterval(actualizarBalanceReal,  30*1000);   // balance cada 30s
+setInterval(sincronizarPosiciones,  60*1000);   // re-sync posiciones cada 1 min
 
 fetchLeaderboard().then(t => {
   tradersCache = t;
@@ -535,7 +597,37 @@ app.get("/api/status", (req, res) => {
 app.get("/api/markets",           (req, res) => res.json(mercadosActivos.slice(0,100)));
 app.get("/api/signals/pending",   (req, res) => res.json(senalesPendientes.slice(0,50)));
 app.get("/api/trades/open",       (req, res) => res.json(posicionesAbiertas));
-app.get("/api/trades/historial",  (req, res) => res.json(historialTrades.slice(0,50)));
+app.get("/api/trades/historial", async (req, res) => {
+  // En modo real, leer actividades directamente desde polymarket.us
+  if (modoReal) {
+    try {
+      const actRes = await pmUs.get("/v1/portfolio/activities", true, { limit: 50 });
+      const actArr = Array.isArray(actRes?.activities) ? actRes.activities : [];
+      const fromApi = actArr.map(a => {
+        const tr    = a.trade || {};
+        const side  = tr.aggressor?.side || "";
+        const isBuy = side.includes("BUY");
+        const titulo = tr.market?.question || tr.marketSlug || "Trade";
+        const precio = parseFloat(tr.price?.value || 0);
+        const costo  = parseFloat(tr.cost?.value  || 0);
+        const qty    = parseFloat(tr.qty || 0);
+        const estado = tr.state === "TRADE_STATE_SETTLED_WIN"  ? "ganado"
+                     : tr.state === "TRADE_STATE_SETTLED_LOSS" ? "perdido"
+                     : "abierto";
+        const pnl = estado === "ganado" ? parseFloat((qty - costo).toFixed(2))
+                  : estado === "perdido" ? parseFloat((-costo).toFixed(2)) : 0;
+        return {
+          titulo, slug: tr.marketSlug,
+          oddsEntrada: precio, stake: costo,
+          pnl, estado, abiertaEn: tr.createTime,
+          tipo: isBuy ? "COMPRA" : "VENTA",
+        };
+      });
+      return res.json([...historialTrades, ...fromApi].slice(0, 50));
+    } catch(e) { /* fallback */ }
+  }
+  res.json(historialTrades.slice(0, 50));
+});
 app.get("/api/balance/historial", (req, res) => res.json(historialBalance));
 
 app.get("/api/traders", async (req, res) => {
