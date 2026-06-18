@@ -319,21 +319,41 @@ const ejecutarTrade = async (mercado, stake, fuerza) => {
 const autoComprarSenales = async () => {
   if (!botActivo || circuitBreaker || !CFG.autoComprar) return;
   const disponible = balanceCash !== null ? balanceCash : (CFG.budget - presupuestoUsado);
-  if (disponible < CFG.stake) return;
+  if (disponible < CFG.stake) { console.log(`💸 Sin cash ($${disponible}) para auto-comprar`); return; }
 
   const candidatos = senalesPendientes.filter(s =>
+    s.slug &&
     !posicionesAbiertas.find(p => p.marketId===s.id) &&
     posicionesAbiertas.length < maxPos()
   );
   if (!candidatos.length) return;
+  console.log(`🔎 Auto-buy: ${candidatos.length} candidatos`);
 
-  let n = 0;
-  for (const s of candidatos.slice(0,5)) {
+  let compradas = 0, descartadas = 0;
+  for (const s of candidatos.slice(0, 8)) {
     if (posicionesAbiertas.length >= maxPos()) break;
+
+    // Verificar que el mercado existe en polymarket.us antes de intentar comprar
+    const bbo = await pmBbo(s.slug);
+    if (!bbo.bid && !bbo.ask && !bbo.last) {
+      // No existe en polymarket.us — quitar de la cola para no reintentar
+      senalesPendientes = senalesPendientes.filter(x => String(x.id) !== String(s.id));
+      descartadas++;
+      continue;
+    }
+
     const t = await ejecutarTrade(s, CFG.stake, s.fuerza);
-    if (t) { n++; senalesPendientes = senalesPendientes.filter(x=>x.id!==s.id); await new Promise(r=>setTimeout(r,600)); }
+    if (t) {
+      compradas++;
+      senalesPendientes = senalesPendientes.filter(x => String(x.id) !== String(s.id));
+      await new Promise(r => setTimeout(r, 700));
+    } else {
+      // Orden fallida — quitar de cola para no reintentar indefinidamente
+      senalesPendientes = senalesPendientes.filter(x => String(x.id) !== String(s.id));
+      descartadas++;
+    }
   }
-  if (n > 0) console.log(`🤖 Sistema1 auto-compró ${n} señales`);
+  console.log(`🤖 Sistema1: ${compradas} compradas, ${descartadas} descartadas`);
 };
 
 // ── SISTEMA 2: COPY TRADING ────────────────────────────────────────────────────
@@ -486,7 +506,7 @@ const copiarTrades = async () => {
 };
 
 // ── TIMERS ─────────────────────────────────────────────────────────────────────
-fetchMercadosReales();
+fetchMercadosReales().then(() => setTimeout(autoComprarSenales, 5000)); // compra 5s tras primer scan
 setInterval(fetchMercadosReales,  5*60*1000);  // scan cada 5 min
 setInterval(autoComprarSenales,   3*60*1000);  // Sistema1: compra cada 3 min
 setInterval(copiarTrades,         2*60*1000);  // Sistema2: copy cada 2 min
@@ -549,15 +569,17 @@ app.get("/api/traders", async (req, res) => {
 });
 
 app.post("/api/signals/:id/ejecutar", async (req, res) => {
-  const s = senalesPendientes.find(x => x.id===parseInt(req.params.id));
-  if (!s) return res.status(404).json({ error:"No encontrada" });
+  const rid = req.params.id;
+  const s = senalesPendientes.find(x => String(x.id) === rid);
+  if (!s) return res.status(404).json({ error:"No encontrada", id: rid, total: senalesPendientes.length });
   const t = await ejecutarTrade(s, s.stake, s.fuerza);
-  if (t) senalesPendientes = senalesPendientes.filter(x=>x.id!==s.id);
+  if (t) senalesPendientes = senalesPendientes.filter(x=>String(x.id)!==rid);
   res.json({ success:!!t, trade:t });
 });
 
 app.post("/api/signals/:id/saltar", (req, res) => {
-  senalesPendientes = senalesPendientes.filter(s=>s.id!==parseInt(req.params.id));
+  const rid = req.params.id;
+  senalesPendientes = senalesPendientes.filter(s=>String(s.id)!==rid);
   res.json({ success:true });
 });
 
