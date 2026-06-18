@@ -420,14 +420,14 @@ const fmtK = n => n >= 1000 ? `${(n/1000).toFixed(0)}k` : n;
 const colorPN = n => parseFloat(n) >= 0 ? "#00D97E" : "#FF4560";
 const signPN  = n => parseFloat(n) >= 0 ? "+" : "";
 
-function showToast(msg, tipo) {
+function showToast(msg, tipo, ms) {
   const t = document.getElementById("toast");
   t.textContent = msg;
   t.style.display = "block";
   t.style.background = tipo === "win" ? "#00D97E22" : tipo === "loss" ? "#FF456022" : "#1A1C26";
   t.style.border = `1px solid ${tipo === "win" ? "#00D97E" : tipo === "loss" ? "#FF4560" : "#1E2030"}`;
   t.style.color = "#E2E8F0";
-  setTimeout(() => t.style.display = "none", 3000);
+  setTimeout(() => t.style.display = "none", ms || 3000);
 }
 
 function showPulse() {
@@ -1025,8 +1025,16 @@ async function venderPos(slug, titulo, sharesTotal) {
       body: JSON.stringify({ slug, shares }),
     });
     const d = await r.json();
-    if (d.success) { showToast(`✅ Vendiste ${d.vendido} shares`, "win"); fetchMisPosiciones(); }
-    else showToast(`⚠️ ${d.error || "Error"}`, "neutral");
+    if (d.success) {
+      showToast(`✅ Vendiste ${d.vendido} shares`, "win");
+      fetchMisPosiciones();
+    } else if (d.sinLiquidez) {
+      showToast(`🔒 Sin compradores (bid ${Math.round((d.bid||0)*100)}%). Espera que el partido resuelva.`, "neutral", 6000);
+    } else if (d.sinFill) {
+      showToast(`⏳ Orden sin fill (bid ${Math.round((d.bid||0)*100)}%). Intenta de nuevo.`, "neutral", 5000);
+    } else {
+      showToast(`⚠️ ${d.error || "Error"}`, "neutral");
+    }
   } catch(e) { showToast("⚠️ Sin conexión", "neutral"); }
 }
 

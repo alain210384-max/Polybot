@@ -106,8 +106,9 @@ async function pmCerrar(slug) { return pmUs.post("/v1/order/close-position", { m
 
 async function pmVender(slug, quantity) {
   const b = await pmBbo(slug);
-  let precio = b.bid ? Math.max(b.bid - 0.01, 0.01) : (b.last || 0.5);
-  precio = Math.round(precio * 100) / 100;
+  // Vender al mejor bid disponible. Si bid < 0.02 el mercado no tiene liquidez real.
+  const bidPrice = b.bid || b.last || 0.01;
+  const precio   = Math.max(Math.round(bidPrice * 100) / 100, 0.01);
   return pmUs.post("/v1/orders", {
     marketSlug: slug,
     intent:   "ORDER_INTENT_SELL_LONG",
@@ -736,13 +737,37 @@ app.post("/api/mis-posiciones/vender", async (req, res) => {
   const { slug, shares } = req.body;
   if (!slug) return res.status(400).json({ error:"Falta slug" });
   try {
-    const pos   = await pmUs.get("/v1/portfolio/positions");
+    const [pos, bbo] = await Promise.all([
+      pmUs.get("/v1/portfolio/positions"),
+      pmBbo(slug),
+    ]);
     const p     = (pos?.positions||{})[slug];
     const total = p ? parseFloat(p.netPosition||0) : 0;
-    if (total<=0) return res.status(400).json({ error:"Sin posición" });
-    const vender = Math.min(parseInt(shares)||total, total);
-    const r = vender>=total ? await pmCerrar(slug) : await pmVender(slug, vender);
+    if (total <= 0) return res.status(400).json({ error:"Sin posición abierta" });
+
+    const bidActual = bbo.bid || 0;
+    if (bidActual < 0.02) {
+      // Sin liquidez real — informar al usuario en vez de ejecutar y fallar silenciosamente
+      return res.json({
+        success:   false,
+        sinLiquidez: true,
+        bid:       bidActual,
+        error:     `Sin compradores ahora (bid ${(bidActual*100).toFixed(0)}%). El mercado resolverá automáticamente al final del partido.`,
+      });
+    }
+
+    const vender = Math.min(parseInt(shares) || total, total);
+    const r      = await pmVender(slug, vender);
+    const fills  = r?.executions?.length || r?.fills?.length || 0;
     setTimeout(actualizarBalanceReal, 2000);
+    if (fills === 0) {
+      return res.json({
+        success:  false,
+        sinFill:  true,
+        bid:      bidActual,
+        error:    `Orden enviada pero sin fill (bid ${(bidActual*100).toFixed(0)}%). Prueba de nuevo en unos segundos.`,
+      });
+    }
     res.json({ success:true, vendido:vender, total, order:r });
   } catch(e) { res.status(500).json({ error:e.response?.data?.message||e.message }); }
 });
