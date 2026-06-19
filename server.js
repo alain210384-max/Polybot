@@ -132,11 +132,28 @@ let senalesPendientes  = [];
 let posicionesAbiertas = [];
 let historialTrades    = [];
 let mercadosActivos    = [];
-const HISTORY_FILE = path.join(__dirname, "balance-history.json");
-let historialBalance = (() => {
+const HISTORY_FILE  = path.join(__dirname, "balance-history.json");
+const JSONBIN_KEY   = process.env.JSONBIN_KEY  || "";
+const JSONBIN_BIN   = process.env.JSONBIN_BIN  || "";
+
+// Carga historial: primero intenta JSONBin (persistente en Render), luego archivo local
+const cargarHistorialBalance = async () => {
+  if (JSONBIN_KEY && JSONBIN_BIN) {
+    try {
+      const r = await axios.get(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN}/latest`,
+        { headers: { "X-Master-Key": JSONBIN_KEY }, timeout: 8000 });
+      const data = r.data?.record?.historial;
+      if (Array.isArray(data) && data.length) {
+        console.log(`☁️  Historial cargado de JSONBin (${data.length} días)`);
+        return data;
+      }
+    } catch(e) { console.log("⚠️ JSONBin load:", e.message); }
+  }
   try { return JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8")); } catch(_) {}
   return [{ dia: "Inicio", valor: CFG.budget }];
-})();
+};
+
+let historialBalance = [{ dia: "Inicio", valor: CFG.budget }];
 
 // Copy trading
 let copiandoSet     = new Set();
@@ -149,8 +166,16 @@ let balanceEnPos     = null;
 let balanceTotalReal = null;
 let balanceBaseReal  = null;
 
-const guardarHistorialBalance = () => {
-  try { fs.writeFileSync(HISTORY_FILE, JSON.stringify(historialBalance.slice(-90))); } catch(_) {}
+const guardarHistorialBalance = async () => {
+  const data = historialBalance.slice(-90);
+  try { fs.writeFileSync(HISTORY_FILE, JSON.stringify(data)); } catch(_) {}
+  if (JSONBIN_KEY && JSONBIN_BIN) {
+    try {
+      await axios.put(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN}`,
+        { historial: data },
+        { headers: { "X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json" }, timeout: 8000 });
+    } catch(e) { console.log("⚠️ JSONBin save:", e.message); }
+  }
 };
 
 const actualizarBalanceReal = async () => {
@@ -551,8 +576,11 @@ const copiarTrades = async () => {
 };
 
 // ── TIMERS ─────────────────────────────────────────────────────────────────────
-// Al arrancar: sincroniza posiciones reales PRIMERO, luego escanea y compra
-actualizarBalanceReal().then(() => sincronizarPosiciones()).then(() =>
+// Al arrancar: carga historial (JSONBin o archivo), luego inicia el bot
+cargarHistorialBalance().then(data => {
+  historialBalance = data;
+  return actualizarBalanceReal();
+}).then(() => sincronizarPosiciones()).then(() =>
   fetchMercadosReales().then(() => setTimeout(autoComprarSenales, 5000))
 );
 setInterval(fetchMercadosReales,  5*60*1000);   // scan cada 5 min
