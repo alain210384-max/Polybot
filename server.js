@@ -268,8 +268,10 @@ const fetchMercadosReales = async () => {
       const batch = pages.flat();
       allMarkets.push(...batch);
       // Para cuando la última página del batch devuelve menos de PAGE resultados
-      const lastFull = pages.find((p, i) => i === pages.length - 1);
-      if (batch.length < PAGE * BATCH || (lastFull && lastFull.length < PAGE)) break;
+      // Solo salir si la última página tiene datos pero menos de PAGE (fin real de la lista).
+      // Si lastPage es [] por error de red, no salir — podría haber más páginas válidas.
+      const lastPage = pages[pages.length - 1];
+      if (batch.length < PAGE * BATCH || (lastPage && lastPage.length > 0 && lastPage.length < PAGE)) break;
     }
     console.log(`📊 ${allMarkets.length} mercados descargados`);
 
@@ -476,6 +478,7 @@ const ejecutarCopyTrade = async (act, wallet) => {
   const title = act.market?.question || act.title || slug || "Copy Trade";
   const prob  = parseFloat(act.price || act.avgPrice || 0.75);
   if (!prob || prob < 0.50 || prob > 0.98 || !slug) return;
+  if (posicionesAbiertas.find(p => p.slug === slug)) return; // Evitar doble compra del mismo mercado
 
   const shares = parseFloat((CFG.stake / prob).toFixed(2));
 
@@ -511,11 +514,12 @@ const cerrarCopyTrade = async (act, wallet) => {
   const pnl = parseFloat(((probSalida-pos.oddsEntrada)*pos.shares).toFixed(2));
   pos.estado="cerrado_copy"; pos.pnl=pnl; pos.oddsActual=probSalida;
   pnlHoy=parseFloat((pnlHoy+pnl).toFixed(2)); balanceReal=parseFloat((balanceReal+pnl).toFixed(2));
-  if(pnl>=0) ganados++; else perdidos++;
+  if(pnl>=0) { ganados++; rachaPerder=0; }
+  else       { perdidos++; rachaPerder++; if(rachaPerder>=5) { circuitBreaker=true; console.log("🚨 Circuit breaker activado"); } }
   presupuestoUsado=parseFloat(Math.max(0,presupuestoUsado-pos.stake).toFixed(2));
   historialTrades.unshift({...pos, cerradaEn:new Date().toISOString()});
   posicionesAbiertas.splice(idx,1);
-  console.log(`📋 COPY cerrado PnL $${pnl}`);
+  console.log(`📋 COPY cerrado PnL $${pnl} | racha: ${rachaPerder}`);
 };
 
 const copiarTrades = async () => {
@@ -569,7 +573,9 @@ setInterval(async () => {
 cron.schedule("0 0 * * *", () => {
   pnlHoy=0; tradesHoy=0; ganados=0; perdidos=0;
   presupuestoUsado=0; rachaPerder=0; circuitBreaker=false;
-  historialBalance.push({ dia:new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit"}), valor:balanceReal });
+  const valorDia = balanceTotalReal ?? balanceReal;
+  historialBalance.push({ dia:new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit"}), valor:valorDia });
+  guardarHistorialBalance();
 });
 
 // ── ENDPOINTS ──────────────────────────────────────────────────────────────────
@@ -624,7 +630,9 @@ app.get("/api/trades/historial", async (req, res) => {
           tipo: isBuy ? "COMPRA" : "VENTA",
         };
       });
-      return res.json([...historialTrades, ...fromApi].slice(0, 50));
+      const slugsLocales = new Set(historialTrades.map(t => t.slug).filter(Boolean));
+      const fromApiUnico = fromApi.filter(a => !slugsLocales.has(a.slug));
+      return res.json([...historialTrades, ...fromApiUnico].slice(0, 50));
     } catch(e) { /* fallback */ }
   }
   res.json(historialTrades.slice(0, 50));
@@ -658,16 +666,28 @@ app.post("/api/signals/:id/saltar", (req, res) => {
   res.json({ success:true });
 });
 
-app.post("/api/trades/:id/cerrar", (req, res) => {
+app.post("/api/trades/:id/cerrar", async (req, res) => {
   const idx = posicionesAbiertas.findIndex(t=>t.id===parseInt(req.params.id));
   if (idx===-1) return res.status(404).json({ error:"No encontrada" });
   const trade = posicionesAbiertas[idx];
+  // Precio de mercado actual para P&L real (oddsActual nunca se actualiza solo)
+  if (trade.slug) {
+    const precioActual = await pmPrecioActual(trade.slug).catch(() => null);
+    if (precioActual) trade.oddsActual = precioActual;
+  }
+  // Cerrar en Polymarket si es modo real
+  if (modoReal && trade.slug) {
+    try { await pmCerrar(trade.slug); }
+    catch(e) { console.log(`⚠️ Close err: ${e.response?.data?.message||e.message}`); }
+  }
   const pnl = parseFloat((trade.stake*trade.oddsActual-trade.stake).toFixed(2));
   trade.estado="cerrado_manual"; trade.pnl=pnl;
-  pnlHoy+=pnl; balanceReal=parseFloat((balanceReal+pnl).toFixed(2));
-  if(pnl>0) ganados++; else perdidos++;
+  pnlHoy=parseFloat((pnlHoy+pnl).toFixed(2)); balanceReal=parseFloat((balanceReal+pnl).toFixed(2));
+  if(pnl>=0) { ganados++; rachaPerder=0; }
+  else       { perdidos++; rachaPerder++; if(rachaPerder>=5) { circuitBreaker=true; console.log("🚨 Circuit breaker activado"); } }
   historialTrades.unshift({...trade, cerradaEn:new Date().toISOString()});
   posicionesAbiertas.splice(idx,1);
+  if (modoReal) setTimeout(actualizarBalanceReal, 2000);
   res.json({ success:true, pnl });
 });
 
@@ -678,7 +698,7 @@ app.post("/api/trades/:id/aumentar", (req, res) => {
   trade.stake = parseFloat((trade.stake+extra).toFixed(2));
   trade.shares = parseFloat((trade.stake/trade.oddsEntrada).toFixed(2));
   trade.potencial=trade.shares; trade.ganancia=parseFloat((trade.potencial-trade.stake).toFixed(2));
-  presupuestoUsado+=extra;
+  presupuestoUsado=parseFloat((presupuestoUsado+extra).toFixed(2));
   res.json({ success:true, nuevoStake:trade.stake, nuevoPotencial:trade.potencial });
 });
 
