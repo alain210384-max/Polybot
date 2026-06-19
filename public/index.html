@@ -248,7 +248,10 @@
     <div class="mobile-section" id="seccionPosiciones">
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-          <span style="font-size:14px;font-weight:700">📊 Posiciones Abiertas</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:14px;font-weight:700">📊 Posiciones Abiertas</span>
+            <span id="badgePosiciones" style="background:#7C3AED33;color:#9D5CF6;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:700">0</span>
+          </div>
           <span id="unrealPnl" class="mono" style="font-size:14px;font-weight:700;color:#9D5CF6">$0.00</span>
         </div>
         <div id="posicionesList" style="max-height:280px;overflow-y:auto">
@@ -605,6 +608,8 @@ async function fetchPosiciones() {
     const unrealized = pos.reduce((s, t) => s + (t.pnl || 0), 0);
     if (document.getElementById("unrealPnl"))
       document.getElementById("unrealPnl").textContent = `${signPN(unrealized)}$${fmt(Math.abs(unrealized))}`;
+    if (document.getElementById("badgePosiciones"))
+      document.getElementById("badgePosiciones").textContent = pos.length;
 
     const html = pos.length === 0
       ? `<div style="text-align:center;color:#64748B;padding:30px">Sin posiciones abiertas</div>`
