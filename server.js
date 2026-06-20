@@ -791,10 +791,46 @@ app.get("/api/traders", async (req, res) => {
 app.post("/api/signals/:id/ejecutar", async (req, res) => {
   const rid = req.params.id;
   const s = senalesPendientes.find(x => String(x.id) === rid);
-  if (!s) return res.status(404).json({ error:"No encontrada", id: rid, total: senalesPendientes.length });
-  const t = await ejecutarTrade(s, s.stake, s.fuerza);
-  if (t) senalesPendientes = senalesPendientes.filter(x=>String(x.id)!==rid);
-  res.json({ success:!!t, trade:t });
+  if (!s) return res.status(404).json({ error:"Señal no encontrada" });
+
+  if (!botActivo) return res.json({ success: false, error: "Bot pausado — reactívalo primero" });
+  if (posicionesAbiertas.length >= maxPos()) return res.json({ success: false, error: `Máximo de posiciones (${maxPos()}) alcanzado` });
+  if (posicionesAbiertas.find(p => p.marketId === s.id)) return res.json({ success: false, error: "Ya tienes esta posición abierta" });
+
+  // Compra manual: usa el stake ACTUAL (no el guardado en la señal al escanear)
+  // y omite el circuit breaker porque el usuario eligió comprar deliberadamente
+  const stake = CFG.stake;
+  const disponible = cashDisponible();
+  if (disponible < stake) return res.json({ success: false, error: `Sin fondos ($${disponible.toFixed(2)} < $${stake})` });
+
+  const shares = parseFloat((stake / s.prob).toFixed(2));
+
+  if (modoReal && s.slug) {
+    try {
+      console.log(`✋ MANUAL: ${s.titulo?.slice(0,40)} — $${stake} @ ${(s.prob*100).toFixed(0)}%`);
+      await pmComprar(s.slug, s.prob, shares);
+    } catch(e) {
+      return res.json({ success: false, error: e.response?.data?.message || e.message });
+    }
+  }
+
+  const trade = {
+    id: Date.now(), marketId: s.id, slug: s.slug,
+    titulo: s.titulo, categoria: s.categoria,
+    oddsEntrada: s.prob, oddsActual: s.prob,
+    stake: parseFloat(stake.toFixed(2)), shares,
+    potencial: shares, ganancia: parseFloat((shares - stake).toFixed(2)),
+    pnl: 0, fuerza: "✋ MANUAL", tradersCount: s.tradersCount || 1,
+    estado: "abierto", abiertaEn: new Date().toISOString(),
+  };
+  marcarOrigen(s.slug, "MANUAL");
+  posicionesAbiertas.push(trade);
+  historialTrades.unshift({ ...trade });
+  presupuestoUsado = parseFloat((presupuestoUsado + stake).toFixed(2));
+  tradesHoy++;
+  senalesPendientes = senalesPendientes.filter(x => String(x.id) !== rid);
+  if (modoReal) setTimeout(actualizarBalanceReal, 2000);
+  res.json({ success: true, trade });
 });
 
 app.post("/api/signals/:id/saltar", (req, res) => {

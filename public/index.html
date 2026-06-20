@@ -260,6 +260,11 @@
           <span style="font-size:14px;font-weight:700">⚡ Señales en Vivo</span>
           <span id="badgeSenales" style="background:#7C3AED33;color:#9D5CF6;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:700">0 LISTAS</span>
         </div>
+        <!-- Circuit breaker: aviso inline en señales -->
+        <div id="circuitAlertSenales" style="display:none;background:#FF456015;border:1px solid #FF4560;border-radius:8px;padding:10px 12px;margin-bottom:10px;align-items:center;justify-content:space-between;gap:8px">
+          <span style="font-size:12px;color:#FF4560;font-weight:700">🚨 Circuit breaker activo (5 pérdidas seguidas). Las compras automáticas están pausadas.</span>
+          <button onclick="resetCircuit()" style="background:#FF456033;border:1px solid #FF4560;border-radius:6px;color:#FF4560;font-size:11px;font-weight:700;padding:4px 10px;cursor:pointer;white-space:nowrap">Reiniciar</button>
+        </div>
         <div id="senalesList" style="max-height:380px;overflow-y:auto"></div>
       </div>
     </div>
@@ -534,6 +539,8 @@ function updateUI() {
   if (estado.stake != null) {
     ["stakeSlider","stakeSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = estado.stake; });
     ["stakeVal","stakeValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${estado.stake}`; });
+    // Actualizar stake global para que los botones de señales muestren el valor correcto
+    if (window._stakeActual !== estado.stake) { window._stakeActual = estado.stake; fetchSenales(); }
   }
   if (estado.minOdds != null) {
     const v = Math.round(estado.minOdds * 100);
@@ -567,6 +574,8 @@ function updateUI() {
 
   // Circuit breaker
   document.getElementById("circuitAlert").style.display = estado.circuitBreaker ? "block" : "none";
+  const cb2 = document.getElementById("circuitAlertSenales");
+  if (cb2) cb2.style.display = estado.circuitBreaker ? "flex" : "none";
 
   // ROI y ganancia — base = primer balance REAL visto (no el presupuesto fijo)
   const base = estado.balanceBase || estado.presupuestoTotal || balanceInicial;
@@ -624,7 +633,7 @@ function renderSenal(s) {
       ${s.tradersCount ? `<span style="font-size:11px;color:#9D5CF6">👥 ${s.tradersCount} traders</span>` : ""}
       <span style="font-size:11px;color:#64748B">${s.diasRestantes}d restantes</span>
     <div style="display:flex;gap:8px">
-      <button class="btn-purple" style="flex:1" onclick="ejecutarSenal(${s.id},this)" data-titulo="${esc(s.titulo)}">COMPRAR $${s.stake}</button>
+      <button class="btn-purple" style="flex:1" onclick="ejecutarSenal(${s.id},this)" data-titulo="${esc(s.titulo)}">COMPRAR $${window._stakeActual || s.stake}</button>
       <button class="btn-gray" style="flex:1" onclick="saltarSenal(${s.id})">SALTAR</button>
     </div>
   </div>`;
@@ -632,13 +641,24 @@ function renderSenal(s) {
 
 async function ejecutarSenal(id, btn) {
   const titulo = btn?.dataset?.titulo || "";
-  showPulse();
+  btn.disabled = true;
+  btn.textContent = "...";
   try {
     const r = await fetch(`${API}/signals/${id}/ejecutar`, { method:"POST" });
     const d = await r.json();
-    if (d.success) { showToast(`✅ ${titulo}`, "win"); fetchSenales(); fetchPosiciones(); fetchStatus(); }
-    else showToast(`⚠️ ${d.error||"Error al ejecutar"}`, "neutral");
-  } catch(e) { showToast("⚠️ Sin conexión con el servidor", "neutral"); }
+    if (d.success) {
+      showToast(`✅ Comprado $${d.trade?.stake || ""} — ${titulo.slice(0,30)}`, "win");
+      fetchSenales(); fetchPosiciones(); fetchStatus();
+    } else {
+      showToast(`⚠️ ${d.error || "Error al ejecutar"}`, "neutral", 5000);
+      btn.disabled = false;
+      btn.textContent = `COMPRAR $${window._stakeActual || ""}`;
+    }
+  } catch(e) {
+    showToast("⚠️ Sin conexión con el servidor", "neutral");
+    btn.disabled = false;
+    btn.textContent = `COMPRAR $${window._stakeActual || ""}`;
+  }
 }
 
 async function saltarSenal(id) {
@@ -856,7 +876,7 @@ async function toggleBot() {
 
 async function resetCircuit() {
   await fetch(`${API}/bot/reset-circuit`, { method:"POST" });
-  showToast("✅ Circuit breaker reiniciado", "win");
+  showToast("✅ Circuit breaker reiniciado — el bot puede comprar de nuevo", "win", 4000);
   fetchStatus();
 }
 
