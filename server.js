@@ -320,8 +320,8 @@ const fetchMercadosReales = async () => {
     const seen  = new Set();
     const validos = [];
 
-    // Día calendario en la zona del usuario (-04:00 por defecto) para clasificar cierre
-    const TZ_OFFSET_MS = (CFG.tzOffsetHoras ?? -4) * 3600000;
+    // Día calendario en la zona del usuario (Arizona -07:00 por defecto) para clasificar cierre
+    const TZ_OFFSET_MS = (CFG.tzOffsetHoras ?? -7) * 3600000;
     const diaCal = ms => Math.floor((ms + TZ_OFFSET_MS) / 86400000);
     const diaHoy = diaCal(ahora);
 
