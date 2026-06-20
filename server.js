@@ -707,10 +707,12 @@ app.get("/api/trades/historial", async (req, res) => {
       });
       const slugsLocales = new Set(historialTrades.map(t => t.slug).filter(Boolean));
       const fromApiUnico = fromApi.filter(a => !slugsLocales.has(a.slug));
-      return res.json([...historialTrades, ...fromApiUnico].slice(0, 50));
+      // Solo trades cerrados/resueltos — los abiertos van en "Posiciones Abiertas"
+      const cerrados = [...historialTrades, ...fromApiUnico].filter(t => t.estado && t.estado !== "abierto");
+      return res.json(cerrados.slice(0, 50));
     } catch(e) { /* fallback */ }
   }
-  res.json(historialTrades.slice(0, 50));
+  res.json(historialTrades.filter(t => t.estado && t.estado !== "abierto").slice(0, 50));
 });
 app.get("/api/balance/historial", (req, res) => res.json(historialBalance));
 
