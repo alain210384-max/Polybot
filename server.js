@@ -739,6 +739,7 @@ app.get("/api/status", (req, res) => {
     mercadosEscaneados:mercadosActivos.length,
     unrealizedPnl:parseFloat(posicionesAbiertas.reduce((s,t)=>s+(t.pnl||0),0).toFixed(2)),
     apiConectada:!!CFG.keyId, modoReal,
+    persistencia: !!(JSONBIN_KEY && JSONBIN_BIN),  // ¿config/historial sobreviven redeploys?
     keyIdActivo:modoReal?pmUs.keyId?.slice(0,8)+"…":null,
     tradersCopiados:copiandoSet.size,
     posicionesAbiertas:posicionesAbiertas.length,
