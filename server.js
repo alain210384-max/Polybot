@@ -39,6 +39,7 @@ let CFG = (() => {
 const guardarCFG = () => {
   const { keyId, secretKey, ...sinCredenciales } = CFG;
   try { fs.writeFileSync(CFG_FILE, JSON.stringify(sinCredenciales, null, 2)); } catch(_) {}
+  guardarBin();  // persistir también en JSONBin (cfg.json no sobrevive redeploys de Render)
 };
 
 // Origen de cada posición por slug (COPY / SCREENER / MANUAL) — sobrevive reinicios
@@ -181,6 +182,13 @@ const cargarHistorialBalance = async () => {
       const r = await axios.get(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN}/latest`,
         { headers: { "X-Master-Key": JSONBIN_KEY }, timeout: 8000 });
       const data = r.data?.record?.historial;
+      const cfgGuardado = r.data?.record?.config;
+      if (cfgGuardado && typeof cfgGuardado === "object") {
+        // Restaurar config guardada (stake, budget, odds…) sin tocar las credenciales
+        const { keyId, secretKey, ...rest } = cfgGuardado;
+        CFG = { ...CFG, ...rest, keyId: CFG.keyId, secretKey: CFG.secretKey };
+        console.log(`☁️  Config restaurada de JSONBin (stake $${CFG.stake}, budget $${CFG.budget})`);
+      }
       if (Array.isArray(data) && data.length) {
         console.log(`☁️  Historial cargado de JSONBin (${data.length} días)`);
         return data;
@@ -204,16 +212,21 @@ let balanceEnPos     = null;
 let balanceTotalReal = null;
 let balanceBaseReal  = null;
 
+// Guarda historial + config en el MISMO bin de JSONBin (ambos sobreviven redeploys)
+const guardarBin = async () => {
+  if (!(JSONBIN_KEY && JSONBIN_BIN)) return;
+  const { keyId, secretKey, ...config } = CFG;   // nunca persistir credenciales
+  try {
+    await axios.put(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN}`,
+      { historial: historialBalance.slice(-90), config },
+      { headers: { "X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json" }, timeout: 8000 });
+  } catch(e) { console.log("⚠️ JSONBin save:", e.message); }
+};
+
 const guardarHistorialBalance = async () => {
   const data = historialBalance.slice(-90);
   try { fs.writeFileSync(HISTORY_FILE, JSON.stringify(data)); } catch(_) {}
-  if (JSONBIN_KEY && JSONBIN_BIN) {
-    try {
-      await axios.put(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN}`,
-        { historial: data },
-        { headers: { "X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json" }, timeout: 8000 });
-    } catch(e) { console.log("⚠️ JSONBin save:", e.message); }
-  }
+  guardarBin();
 };
 
 const actualizarBalanceReal = async () => {
