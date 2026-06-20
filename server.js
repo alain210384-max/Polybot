@@ -840,7 +840,7 @@ app.post("/api/signals/:id/saltar", (req, res) => {
 });
 
 app.post("/api/trades/:id/cerrar", async (req, res) => {
-  const idx = posicionesAbiertas.findIndex(t=>t.id===parseInt(req.params.id));
+  const idx = posicionesAbiertas.findIndex(t=>String(t.id)===String(req.params.id));
   if (idx===-1) return res.status(404).json({ error:"No encontrada" });
   const trade = posicionesAbiertas[idx];
   // Precio de mercado actual para P&L real (oddsActual nunca se actualiza solo)
@@ -864,14 +864,35 @@ app.post("/api/trades/:id/cerrar", async (req, res) => {
   res.json({ success:true, pnl });
 });
 
-app.post("/api/trades/:id/aumentar", (req, res) => {
-  const trade = posicionesAbiertas.find(t=>t.id===parseInt(req.params.id));
+app.post("/api/trades/:id/aumentar", async (req, res) => {
+  const trade = posicionesAbiertas.find(t=>String(t.id)===String(req.params.id));
   if (!trade) return res.status(404).json({ error:"No encontrada" });
   const extra = parseFloat(req.body.monto)||CFG.stake;
-  trade.stake = parseFloat((trade.stake+extra).toFixed(2));
-  trade.shares = parseFloat((trade.stake/trade.oddsEntrada).toFixed(2));
-  trade.potencial=trade.shares; trade.ganancia=parseFloat((trade.potencial-trade.stake).toFixed(2));
-  presupuestoUsado=parseFloat((presupuestoUsado+extra).toFixed(2));
+  if (extra <= 0) return res.json({ success:false, error:"Monto inválido" });
+
+  // En modo real: comprar de verdad más shares en el mercado
+  let sharesExtra;
+  if (modoReal && trade.slug) {
+    try {
+      const b  = await pmBbo(trade.slug);
+      const pc = b.ask || b.last || b.bid;
+      if (!pc) return res.json({ success:false, error:"Sin precio de mercado ahora" });
+      sharesExtra = Math.max(1, Math.round(extra / pc));
+      await pmComprar(trade.slug, pc, sharesExtra);
+      trade.oddsActual = pc;
+      setTimeout(actualizarBalanceReal, 2000);
+    } catch(e) {
+      return res.json({ success:false, error:e.response?.data?.message||e.message });
+    }
+  } else {
+    sharesExtra = parseFloat((extra / (trade.oddsEntrada||1)).toFixed(2));
+  }
+
+  trade.stake  = parseFloat((trade.stake + extra).toFixed(2));
+  trade.shares = parseFloat((trade.shares + sharesExtra).toFixed(2));
+  trade.potencial = trade.shares;
+  trade.ganancia  = parseFloat((trade.potencial - trade.stake).toFixed(2));
+  presupuestoUsado = parseFloat((presupuestoUsado + extra).toFixed(2));
   res.json({ success:true, nuevoStake:trade.stake, nuevoPotencial:trade.potencial });
 });
 
