@@ -679,42 +679,39 @@ app.get("/api/status", (req, res) => {
 app.get("/api/markets",           (req, res) => res.json(mercadosActivos.slice(0,100)));
 app.get("/api/signals/pending",   (req, res) => res.json(senalesPendientes.slice(0,50)));
 app.get("/api/trades/open",       (req, res) => res.json(posicionesAbiertas));
+const num = v => parseFloat(v?.value ?? v ?? 0) || 0;
 app.get("/api/trades/historial", async (req, res) => {
+  const cerradosLocales = historialTrades.filter(t => t.estado && t.estado !== "abierto");
   // En modo real, leer actividades directamente desde polymarket.us
   if (modoReal) {
     try {
       const actRes = await pmUs.get("/v1/portfolio/activities", true, { limit: 50 });
       const actArr = Array.isArray(actRes?.activities) ? actRes.activities : [];
+      if (req.query.debug) return res.json(actArr.slice(0, 3)); // inspeccion de estructura cruda
       const fromApi = actArr.map(a => {
-        const tr    = a.trade || {};
-        const side  = tr.aggressor?.side || "";
-        const isBuy = side.includes("BUY");
-        const titulo = tr.market?.question || tr.marketSlug || "Trade";
-        const precio = parseFloat(tr.price?.value || 0);
-        const costo  = parseFloat(tr.cost?.value  || 0);
-        const qty    = parseFloat(tr.qty || 0);
-        const estado = tr.state === "TRADE_STATE_SETTLED_WIN"  ? "ganado"
-                     : tr.state === "TRADE_STATE_SETTLED_LOSS" ? "perdido"
-                     : "abierto";
-        const pnl = estado === "ganado" ? parseFloat((qty - costo).toFixed(2))
-                  : estado === "perdido" ? parseFloat((-costo).toFixed(2)) : 0;
-        return {
-          titulo, slug: tr.marketSlug,
-          oddsEntrada: precio, stake: costo,
-          pnl, estado, abiertaEn: tr.createTime,
-          tipo: isBuy ? "COMPRA" : "VENTA",
-        };
+        const tipo = (a.type || "").replace("ACTIVITY_TYPE_", "");
+        const r    = a.positionResolution || a.trade || a.fill || a.order || {};
+        const meta = r.marketMetadata || r.beforePosition?.marketMetadata || r.market || {};
+        const titulo = meta.title || meta.question || meta.slug || "";
+        const slug   = meta.slug || r.marketSlug || r.slug || "";
+        const precio = num(r.price) || num(r.avgPrice) || num(r.entryPrice);
+        const stake  = num(r.cost)  || num(r.notional) || num(r.value);
+        const pnl    = num(r.realizedPnl) || num(r.pnl) || num(r.payout);
+        const side   = r.aggressor?.side || r.side || "";
+        // Resolucion = mercado liquidado (ganado/perdido); venta = cierre manual
+        let estado = "abierto";
+        if (tipo.includes("RESOLUTION") || tipo.includes("SETTLE")) estado = pnl >= 0 ? "ganado" : "perdido";
+        else if (tipo.includes("SELL") || side.includes("SELL"))    estado = "cerrado_manual";
+        return { titulo, slug, oddsEntrada: precio, stake, pnl, estado, abiertaEn: a.createTime || r.createTime };
       });
-      // Mostrar en historial: ventas (cerradas manualmente), resueltas (ganado/perdido).
-      // Excluir solo compras puras que siguen abiertas (tipo COMPRA + estado abierto).
-      const cerradosApi = fromApi.filter(t => t.tipo === "VENTA" || t.estado !== "abierto");
-      const slugsLocales = new Set(historialTrades.map(t => t.slug).filter(Boolean));
-      const fromApiUnico = cerradosApi.filter(a => !slugsLocales.has(a.slug));
-      const cerradosLocales = historialTrades.filter(t => t.estado && t.estado !== "abierto");
+      // Solo trades realmente cerrados Y con titulo valido (evita basura "Trade $0.00")
+      const cerradosApi  = fromApi.filter(t => t.titulo && t.estado !== "abierto");
+      const slugsLocales = new Set(cerradosLocales.map(t => t.slug).filter(Boolean));
+      const fromApiUnico = cerradosApi.filter(a => !a.slug || !slugsLocales.has(a.slug));
       return res.json([...cerradosLocales, ...fromApiUnico].slice(0, 50));
     } catch(e) { /* fallback */ }
   }
-  res.json(historialTrades.filter(t => t.estado && t.estado !== "abierto").slice(0, 50));
+  res.json(cerradosLocales.slice(0, 50));
 });
 app.get("/api/balance/historial", (req, res) => res.json(historialBalance));
 
