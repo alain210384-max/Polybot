@@ -688,17 +688,23 @@ app.get("/api/trades/historial", async (req, res) => {
     try {
       const actRes = await pmUs.get("/v1/portfolio/activities", true, { limit: 50 });
       const actArr = Array.isArray(actRes?.activities) ? actRes.activities : [];
-      if (req.query.debug) return res.json(actArr.slice(0, 3)); // inspeccion de estructura cruda
+      if (req.query.debug) {
+        // Un ejemplo completo de cada tipo de actividad presente (sin repetir)
+        const porTipo = {};
+        for (const a of actArr) { const t = a.type || "?"; if (!porTipo[t]) porTipo[t] = a; }
+        return res.json({ tiposPresentes: actArr.map(a => a.type), ejemplos: porTipo });
+      }
       const fromApi = actArr.map(a => {
         const tipo = (a.type || "").replace("ACTIVITY_TYPE_", "");
         const r    = a.positionResolution || a.trade || a.fill || a.order || {};
-        const meta = r.marketMetadata || r.beforePosition?.marketMetadata || r.market || {};
+        const ord  = r.aggressor || r.aggressorExecution?.order || {};
+        const meta = r.marketMetadata || ord.marketMetadata || r.beforePosition?.marketMetadata || r.market || {};
         const titulo = meta.title || meta.question || meta.slug || "";
         const slug   = meta.slug || r.marketSlug || r.slug || "";
-        const precio = num(r.price) || num(r.avgPrice) || num(r.entryPrice);
+        const precio = num(r.price) || num(r.avgPx) || num(ord.price) || num(r.avgPrice) || num(r.entryPrice);
         const stake  = num(r.cost)  || num(r.notional) || num(r.value);
-        const pnl    = num(r.realizedPnl) || num(r.pnl) || num(r.payout);
-        const side   = r.aggressor?.side || r.side || "";
+        const pnl    = num(r.realizedPnl) || num(r.pnl) || num(r.payout) || num(r.profit);
+        const side   = ord.side || r.aggressor?.side || r.side || "";
         // Resolucion = mercado liquidado (ganado/perdido); venta = cierre manual
         let estado = "abierto";
         if (tipo.includes("RESOLUTION") || tipo.includes("SETTLE")) estado = pnl >= 0 ? "ganado" : "perdido";
