@@ -23,6 +23,8 @@ let CFG = {
   secretKey:    process.env.POLYMARKET_SECRET_KEY,
   autoComprar:  true,  // Sistema 1: screener auto-buy
   autoCopiar:   true,  // Sistema 2: copy trader
+  maxHoldHoras: 24,    // Cerrar posiciones automáticamente tras N horas
+  maxDiasRestantes: 7, // Screener: solo mercados que resuelven en ≤7 días
 };
 
 const GAMMA_API = "https://gamma-api.polymarket.com";
@@ -329,7 +331,7 @@ const fetchMercadosReales = async () => {
         console.log(`⚡ EN VIVO: ${m.question?.slice(0,55)} | ${(prob*100).toFixed(0)}%`);
       } else {
         if (prob < CFG.minOdds || prob > CFG.maxOdds) continue;
-        if (diasRestantes < 0 || diasRestantes > 90) continue;
+        if (diasRestantes < 0 || diasRestantes > CFG.maxDiasRestantes) continue;
       }
 
       validos.push({
@@ -583,11 +585,12 @@ cargarHistorialBalance().then(data => {
 }).then(() => sincronizarPosiciones()).then(() =>
   fetchMercadosReales().then(() => setTimeout(autoComprarSenales, 5000))
 );
-setInterval(fetchMercadosReales,  5*60*1000);   // scan cada 5 min
-setInterval(autoComprarSenales,   3*60*1000);   // Sistema1: compra cada 3 min
-setInterval(copiarTrades,         2*60*1000);   // Sistema2: copy cada 2 min
-setInterval(actualizarBalanceReal,  30*1000);   // balance cada 30s
-setInterval(sincronizarPosiciones,  60*1000);   // re-sync posiciones cada 1 min
+setInterval(fetchMercadosReales,      5*60*1000);  // scan cada 5 min
+setInterval(autoComprarSenales,       3*60*1000);  // Sistema1: compra cada 3 min
+setInterval(copiarTrades,             2*60*1000);  // Sistema2: copy cada 2 min
+setInterval(actualizarBalanceReal,      30*1000);  // balance cada 30s
+setInterval(sincronizarPosiciones,      60*1000);  // re-sync posiciones cada 1 min
+setInterval(cerrarPosicionesAntiguas, 30*60*1000); // cierre automático cada 30 min
 
 fetchLeaderboard().then(t => {
   tradersCache = t;
@@ -597,6 +600,37 @@ setInterval(async () => {
   tradersCache = await fetchLeaderboard();
   autoSeguirTopTraders(25);
 }, 60*60*1000);
+
+// Cierra posiciones que llevan más de maxHoldHoras abiertas
+const cerrarPosicionesAntiguas = async () => {
+  const limiteMs = CFG.maxHoldHoras * 60 * 60 * 1000;
+  const ahora    = Date.now();
+  const antiguas = posicionesAbiertas.filter(p =>
+    p.abiertaEn && (ahora - new Date(p.abiertaEn).getTime()) > limiteMs
+  );
+  if (!antiguas.length) return;
+  console.log(`⏰ Cerrando ${antiguas.length} posiciones con más de ${CFG.maxHoldHoras}h`);
+  for (const pos of antiguas) {
+    if (modoReal && pos.slug) {
+      try { await pmCerrar(pos.slug); }
+      catch(e) { console.log(`⚠️ Auto-close err ${pos.slug}: ${e.message}`); }
+    }
+    const precioActual = pos.slug ? await pmPrecioActual(pos.slug).catch(()=>null) : null;
+    const odds = precioActual || pos.oddsActual || pos.oddsEntrada;
+    const pnl  = parseFloat((pos.stake * odds - pos.stake).toFixed(2));
+    pos.estado = "cerrado_tiempo"; pos.pnl = pnl;
+    pnlHoy    = parseFloat((pnlHoy + pnl).toFixed(2));
+    balanceReal = parseFloat((balanceReal + pnl).toFixed(2));
+    if (pnl >= 0) { ganados++; rachaPerder = 0; }
+    else          { perdidos++; rachaPerder++; if (rachaPerder >= 5) circuitBreaker = true; }
+    presupuestoUsado = parseFloat(Math.max(0, presupuestoUsado - pos.stake).toFixed(2));
+    historialTrades.unshift({ ...pos, cerradaEn: new Date().toISOString() });
+    const idx = posicionesAbiertas.findIndex(p => p.id === pos.id);
+    if (idx !== -1) posicionesAbiertas.splice(idx, 1);
+    console.log(`⏰ Cerrado: ${pos.titulo?.slice(0,40)} | PnL $${pnl}`);
+  }
+  if (modoReal) setTimeout(actualizarBalanceReal, 2000);
+};
 
 cron.schedule("0 0 * * *", () => {
   pnlHoy=0; tradesHoy=0; ganados=0; perdidos=0;
@@ -625,7 +659,7 @@ app.get("/api/status", (req, res) => {
     keyIdActivo:modoReal?pmUs.keyId?.slice(0,8)+"…":null,
     tradersCopiados:copiandoSet.size,
     autoComprar:CFG.autoComprar, autoCopiar:CFG.autoCopiar,
-    maxPositiones:maxPos(),
+    maxPositiones:maxPos(), maxHoldHoras:CFG.maxHoldHoras, maxDiasRestantes:CFG.maxDiasRestantes,
   });
 });
 
@@ -828,8 +862,10 @@ app.post("/api/config", (req, res) => {
   if (presupuesto !==undefined) CFG.budget     =parseFloat(presupuesto);
   if (minOdds     !==undefined) CFG.minOdds    =parseFloat(minOdds);
   if (maxOdds     !==undefined) CFG.maxOdds    =parseFloat(maxOdds);
-  if (autoComprar !==undefined) CFG.autoComprar=!!autoComprar;
-  if (autoCopiar  !==undefined) CFG.autoCopiar =!!autoCopiar;
+  if (autoComprar       !==undefined) CFG.autoComprar      =!!autoComprar;
+  if (autoCopiar        !==undefined) CFG.autoCopiar       =!!autoCopiar;
+  if (req.body.maxHoldHoras     !==undefined) CFG.maxHoldHoras     =parseInt(req.body.maxHoldHoras);
+  if (req.body.maxDiasRestantes !==undefined) CFG.maxDiasRestantes =parseInt(req.body.maxDiasRestantes);
   res.json({ success:true });
 });
 
