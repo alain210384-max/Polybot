@@ -705,7 +705,7 @@ function renderPosicion(t) {
     </div>
     <div style="display:flex;gap:6px">
       <button class="btn-green" style="flex:1;font-size:11px;padding:6px" onclick="aumentarPosicion(${t.id},this)" data-titulo="${esc(t.titulo)}">+ AUMENTAR</button>
-      <button class="btn-red"   style="flex:1;font-size:11px;padding:6px" onclick="cerrarPosicion(${t.id},this)" data-titulo="${esc(t.titulo)}" data-odds="${t.oddsActual}" data-stake="${t.stake}">✕ CERRAR $${fmt(t.stake * (t.oddsActual||1))}</button>
+      <button class="btn-red"   style="flex:1;font-size:11px;padding:6px" onclick="cerrarPosicion(${t.id},this)" data-titulo="${esc(t.titulo)}" data-odds="${t.oddsActual}" data-stake="${t.stake}">✕ CERRAR $${fmt((t.shares||0) * (t.oddsActual||1))}</button>
     </div>
   </div>`;
 }

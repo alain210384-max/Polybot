@@ -685,7 +685,8 @@ const cerrarPosicionesAntiguas = async () => {
     }
     const precioActual = pos.slug ? await pmPrecioActual(pos.slug).catch(()=>null) : null;
     const odds = precioActual || pos.oddsActual || pos.oddsEntrada;
-    const pnl  = parseFloat((pos.stake * odds - pos.stake).toFixed(2));
+    // P&L = valor actual (shares*precio) - costo invertido (stake)
+    const pnl  = parseFloat(((pos.shares||0) * odds - pos.stake).toFixed(2));
     pos.estado = "cerrado_tiempo"; pos.pnl = pnl;
     pnlHoy    = parseFloat((pnlHoy + pnl).toFixed(2));
     balanceReal = parseFloat((balanceReal + pnl).toFixed(2));
@@ -853,7 +854,8 @@ app.post("/api/trades/:id/cerrar", async (req, res) => {
     try { await pmCerrar(trade.slug); }
     catch(e) { console.log(`⚠️ Close err: ${e.response?.data?.message||e.message}`); }
   }
-  const pnl = parseFloat((trade.stake*trade.oddsActual-trade.stake).toFixed(2));
+  // P&L = valor actual (shares*precio) - costo invertido (stake)
+  const pnl = parseFloat(((trade.shares||0)*trade.oddsActual-trade.stake).toFixed(2));
   trade.estado="cerrado_manual"; trade.pnl=pnl;
   pnlHoy=parseFloat((pnlHoy+pnl).toFixed(2)); balanceReal=parseFloat((balanceReal+pnl).toFixed(2));
   if(pnl>=0) { ganados++; rachaPerder=0; }
