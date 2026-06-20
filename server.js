@@ -40,6 +40,22 @@ const guardarCFG = () => {
   try { fs.writeFileSync(CFG_FILE, JSON.stringify(sinCredenciales, null, 2)); } catch(_) {}
 };
 
+// Origen de cada posición por slug (COPY / SCREENER / MANUAL) — sobrevive reinicios
+const ORIGEN_FILE = path.join(__dirname, "origen-trades.json");
+let origenPorSlug = (() => {
+  try { return JSON.parse(fs.readFileSync(ORIGEN_FILE, "utf8")); } catch(_) { return {}; }
+})();
+const marcarOrigen = (slug, origen) => {
+  if (!slug || origenPorSlug[slug]) return;          // no sobrescribir el primer origen
+  origenPorSlug[slug] = origen;
+  try { fs.writeFileSync(ORIGEN_FILE, JSON.stringify(origenPorSlug)); } catch(_) {}
+};
+const fuerzaPorOrigen = slug =>
+  origenPorSlug[slug] === "COPY"     ? "🔁 COPY"
+: origenPorSlug[slug] === "SCREENER" ? "🤖 AUTO"
+: origenPorSlug[slug] === "MANUAL"   ? "✋ MANUAL"
+: "SYNC";
+
 const GAMMA_API = "https://gamma-api.polymarket.com";
 const DATA_API  = "https://data-api.polymarket.com";
 
@@ -252,7 +268,7 @@ const sincronizarPosiciones = async () => {
         potencial:   shares,
         ganancia:    parseFloat((shares - costo).toFixed(2)),
         pnl:         0,
-        fuerza:      "SYNC",
+        fuerza:      fuerzaPorOrigen(slug),
         estado:      "abierto",
         abiertaEn:   p.updateTime || new Date().toISOString(),
       });
@@ -418,6 +434,7 @@ const ejecutarTrade = async (mercado, stake, fuerza) => {
     pnl:0, fuerza, tradersCount:mercado.tradersCount||1,
     estado:"abierto", abiertaEn:new Date().toISOString(),
   };
+  marcarOrigen(mercado.slug, "SCREENER");
   posicionesAbiertas.push(trade);
   historialTrades.unshift({ ...trade });
   presupuestoUsado = parseFloat((presupuestoUsado + stake).toFixed(2));
@@ -548,6 +565,7 @@ const ejecutarCopyTrade = async (act, wallet) => {
     stake:CFG.stake, shares, potencial:shares, ganancia:parseFloat((shares-CFG.stake).toFixed(2)),
     pnl:0, fuerza:"🔁 COPY", estado:"abierto", abiertaEn:new Date().toISOString(),
   };
+  marcarOrigen(slug, "COPY");
   posicionesAbiertas.push(trade);
   historialTrades.unshift({...trade});
   presupuestoUsado = parseFloat((presupuestoUsado+CFG.stake).toFixed(2));
@@ -683,6 +701,8 @@ app.get("/api/status", (req, res) => {
     apiConectada:!!CFG.keyId, modoReal,
     keyIdActivo:modoReal?pmUs.keyId?.slice(0,8)+"…":null,
     tradersCopiados:copiandoSet.size,
+    posicionesAbiertas:posicionesAbiertas.length,
+    posicionesCopy:posicionesAbiertas.filter(p=>(p.fuerza||"").includes("COPY")).length,
     autoComprar:CFG.autoComprar, autoCopiar:CFG.autoCopiar,
     maxPositiones:maxPos(), maxHoldHoras:CFG.maxHoldHoras, maxDiasRestantes:CFG.maxDiasRestantes,
   });
@@ -837,6 +857,7 @@ app.post("/api/mis-posiciones/comprar", async (req, res) => {
     const dolares  = parseFloat(monto)||CFG.stake;
     const quantity = Math.max(1,Math.round(dolares/pc));
     const r = await pmComprar(slug, pc, quantity);
+    marcarOrigen(slug, "MANUAL");
     setTimeout(actualizarBalanceReal, 2000);
     res.json({ success:true, comprado:quantity, precio:pc, order:r });
   } catch(e) { res.status(500).json({ error:e.response?.data?.message||e.message }); }
