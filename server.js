@@ -604,7 +604,6 @@ setInterval(autoComprarSenales,       3*60*1000);  // Sistema1: compra cada 3 mi
 setInterval(copiarTrades,             2*60*1000);  // Sistema2: copy cada 2 min
 setInterval(actualizarBalanceReal,      30*1000);  // balance cada 30s
 setInterval(sincronizarPosiciones,      60*1000);  // re-sync posiciones cada 1 min
-setInterval(cerrarPosicionesAntiguas, 30*60*1000); // cierre automático cada 30 min
 
 fetchLeaderboard().then(t => {
   tradersCache = t;
@@ -645,6 +644,7 @@ const cerrarPosicionesAntiguas = async () => {
   }
   if (modoReal) setTimeout(actualizarBalanceReal, 2000);
 };
+setInterval(cerrarPosicionesAntiguas, 30*60*1000); // cierre automático cada 30 min
 
 cron.schedule("0 0 * * *", () => {
   pnlHoy=0; tradesHoy=0; ganados=0; perdidos=0;
