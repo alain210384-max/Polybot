@@ -568,14 +568,13 @@ function renderSenal(s) {
       </div>
       <div style="text-align:right;flex-shrink:0">
         <div class="mono" style="font-size:24px;font-weight:900;color:${prob>=75?"#00D97E":"#F59E0B"}">${prob}%</div>
-        <div style="font-size:10px;color:#64748B">${s.diasRestantes}d restantes</div>
       </div>
     </div>
     <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
-      <span style="font-size:11px;color:#64748B">Vol: $${fmtK(s.volumen)}</span>
-      <span style="font-size:11px;color:#64748B">Liq: $${fmtK(s.liquidez)}</span>
-      <span style="font-size:11px;color:#9D5CF6">👥 ${s.tradersCount} traders</span>
-    </div>
+      ${s.volumen   ? `<span style="font-size:11px;color:#64748B">Vol: $${fmtK(s.volumen)}</span>` : ""}
+      ${s.liquidez  ? `<span style="font-size:11px;color:#64748B">Liq: $${fmtK(s.liquidez)}</span>` : ""}
+      ${s.tradersCount ? `<span style="font-size:11px;color:#9D5CF6">👥 ${s.tradersCount} traders</span>` : ""}
+      <span style="font-size:11px;color:#64748B">${s.diasRestantes}d restantes</span>
     <div style="display:flex;gap:8px">
       <button class="btn-purple" style="flex:1" onclick="ejecutarSenal(${s.id},this)" data-titulo="${esc(s.titulo)}">COMPRAR $${s.stake}</button>
       <button class="btn-gray" style="flex:1" onclick="saltarSenal(${s.id})">SALTAR</button>
