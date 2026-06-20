@@ -320,6 +320,11 @@ const fetchMercadosReales = async () => {
     const seen  = new Set();
     const validos = [];
 
+    // Día calendario en la zona del usuario (-04:00 por defecto) para clasificar cierre
+    const TZ_OFFSET_MS = (CFG.tzOffsetHoras ?? -4) * 3600000;
+    const diaCal = ms => Math.floor((ms + TZ_OFFSET_MS) / 86400000);
+    const diaHoy = diaCal(ahora);
+
     for (const m of allMarkets) {
       if (!m.active || m.closed) continue;
       const uid = String(m.id || m.slug);
@@ -335,6 +340,8 @@ const fetchMercadosReales = async () => {
       const gameStartMs  = m.gameStartTime ? new Date(m.gameStartTime).getTime() : null;
       const endMs        = m.endDate       ? new Date(m.endDate).getTime()       : null;
       const diasRestantes = endMs ? Math.ceil((endMs - ahora) / 86400000) : 30;
+      // diaCierre = 0 cierra HOY, 1 cierra MAÑANA, 2+ más adelante (en zona del usuario)
+      const diaCierre = endMs ? (diaCal(endMs) - diaHoy) : 99;
       // EN VIVO = juego ya empezó Y resuelve en ≤2 días (no captura eventos de meses)
       const enVivo = !!(gameStartMs && gameStartMs < ahora && endMs && endMs > ahora && diasRestantes <= 2);
 
@@ -346,6 +353,8 @@ const fetchMercadosReales = async () => {
       } else {
         if (prob < CFG.minOdds || prob > CFG.maxOdds) continue;
         if (diasRestantes < 0 || diasRestantes > CFG.maxDiasRestantes) continue;
+        // Solo mercados que cierran HOY (0) o MAÑANA (1) — dinero rápido
+        if (diaCierre > 1) continue;
       }
 
       validos.push({
@@ -354,7 +363,7 @@ const fetchMercadosReales = async () => {
         outcome:  longSide.description || "YES",
         categoria,
         prob: parseFloat(prob.toFixed(4)),
-        diasRestantes, enVivo, stake: CFG.stake,
+        diasRestantes, diaCierre, enVivo, stake: CFG.stake,
         fuerza: enVivo ? "🔴 EN VIVO"
                : prob >= 0.85 ? "MÁXIMA"
                : prob >= 0.78 ? "FUERTE"
@@ -424,9 +433,11 @@ const autoComprarSenales = async () => {
 
   const candidatos = senalesPendientes.filter(s =>
     s.slug && !posicionesAbiertas.find(p => p.marketId === s.id) && posicionesAbiertas.length < maxPos()
-  );
+  )
+  // Prioridad: cierran HOY primero (diaCierre 0 / en vivo), luego MAÑANA (1). Dentro de cada día, mayor prob.
+  .sort((a, b) => ((a.diaCierre ?? 99) - (b.diaCierre ?? 99)) || (b.enVivo - a.enVivo) || (b.prob - a.prob));
   if (!candidatos.length) return;
-  console.log(`🔎 Auto-buy: ${candidatos.length} candidatos`);
+  console.log(`🔎 Auto-buy: ${candidatos.length} candidatos (hoy: ${candidatos.filter(c=>c.diaCierre===0||c.enVivo).length}, mañana: ${candidatos.filter(c=>c.diaCierre===1&&!c.enVivo).length})`);
 
   let compradas = 0;
   for (const s of candidatos.slice(0, 5)) {
