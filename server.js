@@ -688,10 +688,9 @@ app.get("/api/trades/historial", async (req, res) => {
       const actRes = await pmUs.get("/v1/portfolio/activities", true, { limit: 50 });
       const actArr = Array.isArray(actRes?.activities) ? actRes.activities : [];
       if (req.query.debug) {
-        // Un ejemplo completo de cada tipo de actividad presente (sin repetir)
-        const porTipo = {};
-        for (const a of actArr) { const t = a.type || "?"; if (!porTipo[t]) porTipo[t] = a; }
-        return res.json({ tiposPresentes: actArr.map(a => a.type), ejemplos: porTipo });
+        // Solo el ejemplo de RESOLUCION (mercado liquidado) para ver campos de P&L
+        const resol = actArr.find(a => (a.type || "").includes("RESOLUTION"));
+        return res.json(resol || { sinResolucion: true });
       }
       const fromApi = actArr.map(a => {
         const tipo = (a.type || "").replace("ACTIVITY_TYPE_", "");
