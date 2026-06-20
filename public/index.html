@@ -227,14 +227,10 @@
         <div style="font-size:10px;color:#64748B;margin-top:4px">⏰ Cierre auto si el mercado no resuelve</div>
       </div>
 
-      <!-- Max días screener -->
-      <div style="margin-bottom:20px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-          <span style="font-size:12px;color:#64748B">Mercados que resuelven en</span>
-          <span id="diasVal" style="font-size:13px;font-weight:700;color:#9D5CF6" class="mono">≤7d</span>
-        </div>
-        <input type="range" min="1" max="30" value="7" id="diasSlider" oninput="updateDias(this.value)">
-        <div style="font-size:10px;color:#64748B;margin-top:4px">📅 Screener solo busca mercados cortos</div>
+      <!-- El bot compra solo mercados que cierran HOY o MAÑANA (regla fija) -->
+      <div style="margin-bottom:20px;padding:10px 12px;background:#9D5CF611;border:1px solid #9D5CF633;border-radius:8px">
+        <div style="font-size:11px;color:#9D5CF6;font-weight:700">📅 Solo mercados de hoy/mañana</div>
+        <div style="font-size:10px;color:#64748B;margin-top:3px">El bot prioriza cierres de HOY; si no llena el presupuesto, usa los de MAÑANA.</div>
       </div>
 
       <!-- Kelly Indicator -->
@@ -558,10 +554,6 @@ function updateUI() {
   if (estado.maxHoldHoras != null) {
     ["holdSlider","holdSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = estado.maxHoldHoras; });
     ["holdVal","holdValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${estado.maxHoldHoras}h`; });
-  }
-  if (estado.maxDiasRestantes != null) {
-    ["diasSlider","diasSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = estado.maxDiasRestantes; });
-    ["diasVal","diasValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `≤${estado.maxDiasRestantes}d`; });
   }
 
   // Bot toggle
@@ -913,10 +905,6 @@ function updateHold(val) {
   fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ maxHoldHoras: parseInt(val) }) });
 }
 
-function updateDias(val) {
-  document.getElementById("diasVal").textContent = `≤${val}d`;
-  fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ maxDiasRestantes: parseInt(val) }) });
-}
 
 function updateOdds(val) {
   document.getElementById("oddsVal").textContent = `${val}%`;

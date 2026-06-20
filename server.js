@@ -376,13 +376,19 @@ const fetchMercadosReales = async () => {
       const enVivo = !!(gameStartMs && gameStartMs < ahora && endMs && endMs > ahora && diasRestantes <= 2);
 
       const categoria = mapCategoria(m.tags || [], m.question || "", m.slug || "");
+      // Índice bursátil (S&P, Nasdaq, Dow, VIX) que cierra hoy/mañana = prioridad intradía
+      const intraday = esIndiceIntraday(categoria, diaCierre);
 
       if (enVivo) {
         if (prob < 0.55) continue;
         console.log(`⚡ EN VIVO: ${m.question?.slice(0,55)} | ${(prob*100).toFixed(0)}%`);
+      } else if (intraday) {
+        // Índices intradía: umbral de odds más bajo (0.60) porque resuelven el mismo día
+        if (prob < 0.60 || prob > CFG.maxOdds) continue;
+        if (diaCierre > 1) continue;
+        console.log(`📈 ÍNDICE: ${m.question?.slice(0,55)} | ${(prob*100).toFixed(0)}%`);
       } else {
         if (prob < CFG.minOdds || prob > CFG.maxOdds) continue;
-        if (diasRestantes < 0 || diasRestantes > CFG.maxDiasRestantes) continue;
         // Solo mercados que cierran HOY (0) o MAÑANA (1) — dinero rápido
         if (diaCierre > 1) continue;
       }
@@ -393,8 +399,9 @@ const fetchMercadosReales = async () => {
         outcome:  longSide.description || "YES",
         categoria,
         prob: parseFloat(prob.toFixed(4)),
-        diasRestantes, diaCierre, enVivo, stake: CFG.stake,
+        diasRestantes, diaCierre, enVivo, intraday, stake: CFG.stake,
         fuerza: enVivo ? "🔴 EN VIVO"
+               : intraday ? "📈 INTRADAY"
                : prob >= 0.85 ? "MÁXIMA"
                : prob >= 0.78 ? "FUERTE"
                : prob >= 0.72 ? "MEDIA" : "DÉBIL",
@@ -470,8 +477,11 @@ const autoComprarSenales = async () => {
   const candidatos = senalesPendientes.filter(s =>
     s.slug && !posicionesAbiertas.find(p => p.marketId === s.id) && posicionesAbiertas.length < maxPos()
   )
-  // Prioridad: cierran HOY primero (diaCierre 0 / en vivo), luego MAÑANA (1). Dentro de cada día, mayor prob.
-  .sort((a, b) => ((a.diaCierre ?? 99) - (b.diaCierre ?? 99)) || (b.enVivo - a.enVivo) || (b.prob - a.prob));
+  // Prioridad: cierran HOY primero (diaCierre 0), luego MAÑANA (1). Dentro de cada día:
+  // EN VIVO e ÍNDICES intradía primero, después por mayor probabilidad.
+  .sort((a, b) => ((a.diaCierre ?? 99) - (b.diaCierre ?? 99))
+                || ((b.enVivo || b.intraday) - (a.enVivo || a.intraday))
+                || (b.prob - a.prob));
   if (!candidatos.length) return;
   console.log(`🔎 Auto-buy: ${candidatos.length} candidatos (hoy: ${candidatos.filter(c=>c.diaCierre===0||c.enVivo).length}, mañana: ${candidatos.filter(c=>c.diaCierre===1&&!c.enVivo).length})`);
 
