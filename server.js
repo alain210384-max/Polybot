@@ -26,6 +26,7 @@ const CFG_DEFAULTS = {
   autoCopiar:       true,
   maxHoldHoras:     24,
   maxDiasRestantes: 7,
+  reservaCopyPct:   0.4,   // % del presupuesto reservado solo para copy trading
 };
 let CFG = (() => {
   try {
@@ -404,8 +405,13 @@ const fetchMercadosReales = async () => {
 // ── EJECUTAR TRADE ─────────────────────────────────────────────────────────────
 const maxPos = () => Math.max(3, Math.floor(CFG.budget / CFG.stake));
 
+// Cash total disponible (cash real si hay, si no presupuesto - usado)
+const cashDisponible = () => balanceCash !== null ? balanceCash : (CFG.budget - presupuestoUsado);
+// Cash que puede usar el SCREENER: deja reservado un % del presupuesto para copy trading
+const cashParaScreener = () => Math.max(0, cashDisponible() - CFG.budget * (CFG.reservaCopyPct ?? 0.4));
+
 const ejecutarTrade = async (mercado, stake, fuerza) => {
-  const disponible = balanceCash !== null ? balanceCash : (CFG.budget - presupuestoUsado);
+  const disponible = cashParaScreener();   // el screener respeta la reserva de copy
   if (disponible < stake || circuitBreaker || !botActivo) return null;
   if (posicionesAbiertas.length >= maxPos()) return null;
   if (posicionesAbiertas.find(p => p.marketId === mercado.id)) return null; // ya abierto
@@ -445,8 +451,8 @@ const ejecutarTrade = async (mercado, stake, fuerza) => {
 // Auto-buy Sistema 1: cada 3 min compra señales válidas de polymarket.us
 const autoComprarSenales = async () => {
   if (!botActivo || circuitBreaker || !CFG.autoComprar) return;
-  const disponible = balanceCash !== null ? balanceCash : (CFG.budget - presupuestoUsado);
-  if (disponible < CFG.stake) { console.log(`💸 Sin cash ($${disponible})`); return; }
+  const disponible = cashParaScreener();   // deja reserva para copy trading
+  if (disponible < CFG.stake) { console.log(`💸 Screener sin cash (reserva copy activa, $${disponible.toFixed(2)} libre)`); return; }
 
   const candidatos = senalesPendientes.filter(s =>
     s.slug && !posicionesAbiertas.find(p => p.marketId === s.id) && posicionesAbiertas.length < maxPos()
@@ -540,7 +546,7 @@ const getTraderActivity = async (wallet) => {
 
 const ejecutarCopyTrade = async (act, wallet) => {
   if (!botActivo || circuitBreaker || !CFG.autoCopiar) return;
-  const disponible = balanceCash !== null ? balanceCash : (CFG.budget - presupuestoUsado);
+  const disponible = cashDisponible();   // copy trade usa todo el cash (incluida la reserva)
   if (disponible < CFG.stake || posicionesAbiertas.length >= maxPos()) return;
 
   const slug  = act.market?.slug || act.slug;
@@ -626,7 +632,7 @@ cargarHistorialBalance().then(data => {
   historialBalance = data;
   return actualizarBalanceReal();
 }).then(() => sincronizarPosiciones()).then(() =>
-  fetchMercadosReales().then(() => setTimeout(autoComprarSenales, 5000))
+  fetchMercadosReales().then(() => setTimeout(autoComprarSenales, 20000)) // copy va primero
 );
 setInterval(fetchMercadosReales,      5*60*1000);  // scan cada 5 min
 setInterval(autoComprarSenales,       3*60*1000);  // Sistema1: compra cada 3 min
@@ -634,9 +640,10 @@ setInterval(copiarTrades,             2*60*1000);  // Sistema2: copy cada 2 min
 setInterval(actualizarBalanceReal,      30*1000);  // balance cada 30s
 setInterval(sincronizarPosiciones,      60*1000);  // re-sync posiciones cada 1 min
 
-fetchLeaderboard().then(t => {
+fetchLeaderboard().then(async t => {
   tradersCache = t;
-  autoSeguirTopTraders(25); // Auto-follow al arrancar
+  autoSeguirTopTraders(25);   // Auto-follow al arrancar
+  await copiarTrades();       // Copy trade tiene prioridad: corre antes que el screener
 });
 setInterval(async () => {
   tradersCache = await fetchLeaderboard();
@@ -940,6 +947,7 @@ app.post("/api/config", (req, res) => {
   if (autoCopiar        !==undefined) CFG.autoCopiar       =!!autoCopiar;
   if (req.body.maxHoldHoras     !==undefined) CFG.maxHoldHoras     =parseInt(req.body.maxHoldHoras);
   if (req.body.maxDiasRestantes !==undefined) CFG.maxDiasRestantes =parseInt(req.body.maxDiasRestantes);
+  if (req.body.reservaCopyPct   !==undefined) CFG.reservaCopyPct   =Math.max(0, Math.min(0.9, parseFloat(req.body.reservaCopyPct)));
   guardarCFG();
   res.json({ success:true });
 });
