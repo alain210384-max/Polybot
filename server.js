@@ -705,11 +705,13 @@ app.get("/api/trades/historial", async (req, res) => {
           tipo: isBuy ? "COMPRA" : "VENTA",
         };
       });
+      // Mostrar en historial: ventas (cerradas manualmente), resueltas (ganado/perdido).
+      // Excluir solo compras puras que siguen abiertas (tipo COMPRA + estado abierto).
+      const cerradosApi = fromApi.filter(t => t.tipo === "VENTA" || t.estado !== "abierto");
       const slugsLocales = new Set(historialTrades.map(t => t.slug).filter(Boolean));
-      const fromApiUnico = fromApi.filter(a => !slugsLocales.has(a.slug));
-      // Solo trades cerrados/resueltos — los abiertos van en "Posiciones Abiertas"
-      const cerrados = [...historialTrades, ...fromApiUnico].filter(t => t.estado && t.estado !== "abierto");
-      return res.json(cerrados.slice(0, 50));
+      const fromApiUnico = cerradosApi.filter(a => !slugsLocales.has(a.slug));
+      const cerradosLocales = historialTrades.filter(t => t.estado && t.estado !== "abierto");
+      return res.json([...cerradosLocales, ...fromApiUnico].slice(0, 50));
     } catch(e) { /* fallback */ }
   }
   res.json(historialTrades.filter(t => t.estado && t.estado !== "abierto").slice(0, 50));
