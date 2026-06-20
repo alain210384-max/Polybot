@@ -197,7 +197,24 @@
           <input id="customPresupuesto" type="number" placeholder="$" style="flex:1;background:#1A1C26;border:1px solid #1E2030;border-radius:8px;padding:8px;color:#E2E8F0;font-size:13px">
           <button class="btn-purple" onclick="setPresupuestoCustom()">OK</button>
         </div>
+        <div style="font-size:10px;color:#64748B;margin-top:6px" id="budgetNota"></div>
       </div>
+
+      <!-- Reinvertir ganancias -->
+      <div style="margin-bottom:14px;padding:12px;background:#0E1420;border:1px solid #1E2030;border-radius:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:#E2E8F0">♻️ Reinvertir ganancias</div>
+            <div style="font-size:10px;color:#64748B;margin-top:2px">Usa todo tu balance (incluidas ganancias) para operar</div>
+          </div>
+          <div id="reinvertirToggle" class="toggle-switch" style="background:#1E2030" onclick="toggleReinvertir()">
+            <div id="reinvertirKnob" class="toggle-knob" style="left:3px"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detener / Activar bot -->
+      <button id="btnStopBot" onclick="toggleBot()" style="width:100%;margin-bottom:20px;padding:12px;border:none;border-radius:10px;font-weight:800;font-size:14px;cursor:pointer;background:#FF456022;color:#FF4560;border:1px solid #FF4560">⏸ DETENER BOT</button>
 
       <!-- Stake por trade -->
       <div style="margin-bottom:20px">
@@ -582,6 +599,27 @@ function updateUI() {
     }
   });
 
+  // Botón grande de Detener/Activar bot
+  const bs = document.getElementById("btnStopBot");
+  if (bs) {
+    if (botOn) {
+      bs.textContent = "⏸ DETENER BOT";
+      bs.style.background = "#FF456022"; bs.style.color = "#FF4560"; bs.style.border = "1px solid #FF4560";
+    } else {
+      bs.textContent = "▶ ACTIVAR BOT";
+      bs.style.background = "#00D97E22"; bs.style.color = "#00D97E"; bs.style.border = "1px solid #00D97E";
+    }
+  }
+
+  // Toggle de reinvertir
+  if (estado.reinvertir != null) { window._reinvertir = estado.reinvertir; pintarReinvertir(estado.reinvertir); }
+
+  // Nota del presupuesto en modo real
+  const bn = document.getElementById("budgetNota");
+  if (bn) bn.textContent = estado.modoReal
+    ? `Operas con tu balance real: $${fmt(estado.balance)}. El límite frena nuevas compras al alcanzarlo.`
+    : "";
+
   // Status dot
   document.getElementById("statusDot").style.background   = botOn ? "#00D97E" : "#FF4560";
   document.getElementById("statusLabel").textContent       = botOn ? "EN VIVO" : "PAUSADO";
@@ -911,6 +949,21 @@ function setPresupuestoCustom() {
   const val = parseFloat(document.getElementById("customPresupuesto").value);
   if (!val || val < 1) return;
   setPresupuesto(val);
+  showToast(`✅ Presupuesto: $${val}`, "win");
+}
+
+function toggleReinvertir() {
+  const nuevo = !window._reinvertir;
+  window._reinvertir = nuevo;
+  pintarReinvertir(nuevo);
+  fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ reinvertir: nuevo }) });
+  showToast(nuevo ? "♻️ Reinvirtiendo ganancias" : "Reinversión desactivada", nuevo ? "win" : "neutral");
+}
+function pintarReinvertir(on) {
+  const t = document.getElementById("reinvertirToggle");
+  const k = document.getElementById("reinvertirKnob");
+  if (t) t.style.background = on ? "#00D97E" : "#1E2030";
+  if (k) k.style.left = on ? "23px" : "3px";
 }
 
 function updateStake(val) {

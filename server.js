@@ -26,7 +26,8 @@ const CFG_DEFAULTS = {
   autoCopiar:       true,
   maxHoldHoras:     24,
   maxDiasRestantes: 7,
-  reservaCopyPct:   0.4,   // % del presupuesto reservado solo para copy trading
+  reservaCopyPct:   0.4,   // % del cash reservado solo para copy trading
+  reinvertir:       false, // auto-compounding: usa el balance real completo como presupuesto
 };
 let CFG = (() => {
   try {
@@ -427,12 +428,16 @@ const fetchMercadosReales = async () => {
 };
 
 // ── EJECUTAR TRADE ─────────────────────────────────────────────────────────────
-const maxPos = () => Math.max(3, Math.floor(CFG.budget / CFG.stake));
+// Presupuesto efectivo: con "reinvertir" ON usa el balance real completo (auto-compounding);
+// si está OFF, respeta el límite fijo que pusiste.
+const presupuestoEfectivo = () => (CFG.reinvertir && balanceTotalReal !== null) ? balanceTotalReal : CFG.budget;
+const maxPos = () => Math.max(3, Math.floor(presupuestoEfectivo() / CFG.stake));
 
 // Cash total disponible (cash real si hay, si no presupuesto - usado)
-const cashDisponible = () => balanceCash !== null ? balanceCash : (CFG.budget - presupuestoUsado);
-// Cash que puede usar el SCREENER: deja reservado un % del presupuesto para copy trading
-const cashParaScreener = () => Math.max(0, cashDisponible() - CFG.budget * (CFG.reservaCopyPct ?? 0.4));
+const cashDisponible = () => balanceCash !== null ? balanceCash : (presupuestoEfectivo() - presupuestoUsado);
+// Cash que puede usar el SCREENER: reserva un % del CASH DISPONIBLE para copy trading
+// (antes reservaba sobre el presupuesto fijo, lo que dejaba $0 al screener si el cash era bajo)
+const cashParaScreener = () => Math.max(0, cashDisponible() * (1 - (CFG.reservaCopyPct ?? 0.4)));
 
 const ejecutarTrade = async (mercado, stake, fuerza) => {
   const disponible = cashParaScreener();   // el screener respeta la reserva de copy
@@ -768,7 +773,7 @@ app.get("/api/status", (req, res) => {
     tradersCopiados:copiandoSet.size,
     posicionesAbiertas:posicionesAbiertas.length,
     posicionesCopy:posicionesAbiertas.filter(p=>(p.fuerza||"").includes("COPY")).length,
-    autoComprar:CFG.autoComprar, autoCopiar:CFG.autoCopiar,
+    autoComprar:CFG.autoComprar, autoCopiar:CFG.autoCopiar, reinvertir:CFG.reinvertir,
     maxPositiones:maxPos(), maxHoldHoras:CFG.maxHoldHoras, maxDiasRestantes:CFG.maxDiasRestantes,
   });
 });
@@ -1099,6 +1104,7 @@ app.post("/api/config", (req, res) => {
   if (req.body.maxHoldHoras     !==undefined) CFG.maxHoldHoras     =parseInt(req.body.maxHoldHoras);
   if (req.body.maxDiasRestantes !==undefined) CFG.maxDiasRestantes =parseInt(req.body.maxDiasRestantes);
   if (req.body.reservaCopyPct   !==undefined) CFG.reservaCopyPct   =Math.max(0, Math.min(0.9, parseFloat(req.body.reservaCopyPct)));
+  if (req.body.reinvertir       !==undefined) CFG.reinvertir       =!!req.body.reinvertir;
   guardarCFG();
   res.json({ success:true });
 });
