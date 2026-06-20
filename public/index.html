@@ -216,6 +216,26 @@
         <input type="range" min="60" max="90" value="70" id="oddsSlider" oninput="updateOdds(this.value)">
       </div>
 
+      <!-- Cierre automático -->
+      <div style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:12px;color:#64748B">Cerrar posición tras</span>
+          <span id="holdVal" style="font-size:13px;font-weight:700;color:#FF4560" class="mono">24h</span>
+        </div>
+        <input type="range" min="6" max="72" step="6" value="24" id="holdSlider" oninput="updateHold(this.value)">
+        <div style="font-size:10px;color:#64748B;margin-top:4px">⏰ Cierre auto si el mercado no resuelve</div>
+      </div>
+
+      <!-- Max días screener -->
+      <div style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:12px;color:#64748B">Mercados que resuelven en</span>
+          <span id="diasVal" style="font-size:13px;font-weight:700;color:#9D5CF6" class="mono">≤7d</span>
+        </div>
+        <input type="range" min="1" max="30" value="7" id="diasSlider" oninput="updateDias(this.value)">
+        <div style="font-size:10px;color:#64748B;margin-top:4px">📅 Screener solo busca mercados cortos</div>
+      </div>
+
       <!-- Kelly Indicator -->
       <div class="card-dark" style="text-align:center;margin-bottom:16px">
         <div style="font-size:10px;color:#64748B;letter-spacing:1px;margin-bottom:4px">KELLY 2.5% RECOMENDADO</div>
@@ -248,7 +268,10 @@
     <div class="mobile-section" id="seccionPosiciones">
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-          <span style="font-size:14px;font-weight:700">📊 Posiciones Abiertas</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:14px;font-weight:700">📊 Posiciones Abiertas</span>
+            <span id="badgePosiciones" style="background:#7C3AED33;color:#9D5CF6;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:700">0</span>
+          </div>
           <span id="unrealPnl" class="mono" style="font-size:14px;font-weight:700;color:#9D5CF6">$0.00</span>
         </div>
         <div id="posicionesList" style="max-height:280px;overflow-y:auto">
@@ -414,6 +437,9 @@ const balanceInicial = parseFloat(localStorage.getItem("balanceInicial") || "59"
 const CATS = { SPX: "#00D97E", NQ: "#3B82F6", DOW: "#6366F1", RUSSELL: "#818CF8", VIX: "#EC4899", CRYPTO: "#9D5CF6", BEISBOL: "#10B981", NBA: "#F97316", NFL: "#8B5CF6", NHL: "#0EA5E9", SOCCER: "#06B6D4", TENIS: "#84CC16", GOLF: "#22C55E", F1: "#DC2626", SPORTS: "#00D97E", UFC: "#F59E0B", MACRO: "#38BDF8", POLITICA: "#EF4444", WILDCARD: "#64748B" };
 const categoriasActivas = { SPX: true, NQ: true, DOW: true, RUSSELL: true, VIX: false, CRYPTO: true, BEISBOL: true, NBA: true, NFL: true, NHL: true, SOCCER: true, TENIS: true, GOLF: true, F1: true, SPORTS: true, UFC: true, MACRO: true, POLITICA: true };
 
+// Escapa HTML para prevenir XSS al insertar datos externos via innerHTML
+const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#x27;");
+
 // ── UTILIDADES ────────────────────────────────────────────────────────────────
 const fmt  = n => parseFloat(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtK = n => n >= 1000 ? `${(n/1000).toFixed(0)}k` : n;
@@ -495,6 +521,25 @@ function updateUI() {
   if (document.getElementById("kellyValM"))
     document.getElementById("kellyValM").textContent = `$${fmt(kelly)}`;
 
+  // Sync sliders with saved server config
+  if (estado.stake != null) {
+    ["stakeSlider","stakeSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = estado.stake; });
+    ["stakeVal","stakeValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${estado.stake}`; });
+  }
+  if (estado.minOdds != null) {
+    const v = Math.round(estado.minOdds * 100);
+    ["oddsSlider","oddsSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = v; });
+    ["oddsVal","oddsValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${v}%`; });
+  }
+  if (estado.maxHoldHoras != null) {
+    ["holdSlider","holdSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = estado.maxHoldHoras; });
+    ["holdVal","holdValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${estado.maxHoldHoras}h`; });
+  }
+  if (estado.maxDiasRestantes != null) {
+    ["diasSlider","diasSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = estado.maxDiasRestantes; });
+    ["diasVal","diasValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `≤${estado.maxDiasRestantes}d`; });
+  }
+
   // Bot toggle
   const toggles = [["botToggle","botKnob"],["botToggleMobile","botKnobMobile"]];
   toggles.forEach(([tid, kid]) => {
@@ -558,30 +603,33 @@ function renderSenal(s) {
       <div style="flex:1;margin-right:10px">
         <span class="cat-badge" style="background:${cc}22;color:${cc}">${s.categoria}</span>
         <span class="strength-badge" style="background:${fColor}22;color:${fColor};margin-left:6px">${enVivo ? "🔴 EN VIVO" : fuerza}</span>
-        <div style="font-size:14px;font-weight:600;color:#E2E8F0;margin-top:6px;line-height:1.3">${s.titulo}</div>
+        <div style="font-size:14px;font-weight:600;color:#E2E8F0;margin-top:6px;line-height:1.3">${esc(s.titulo)}</div>
       </div>
       <div style="text-align:right;flex-shrink:0">
         <div class="mono" style="font-size:24px;font-weight:900;color:${prob>=75?"#00D97E":"#F59E0B"}">${prob}%</div>
-        <div style="font-size:10px;color:#64748B">${s.diasRestantes}d restantes</div>
       </div>
     </div>
     <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
-      <span style="font-size:11px;color:#64748B">Vol: $${fmtK(s.volumen)}</span>
-      <span style="font-size:11px;color:#64748B">Liq: $${fmtK(s.liquidez)}</span>
-      <span style="font-size:11px;color:#9D5CF6">👥 ${s.tradersCount} traders</span>
-    </div>
+      ${s.volumen   ? `<span style="font-size:11px;color:#64748B">Vol: $${fmtK(s.volumen)}</span>` : ""}
+      ${s.liquidez  ? `<span style="font-size:11px;color:#64748B">Liq: $${fmtK(s.liquidez)}</span>` : ""}
+      ${s.tradersCount ? `<span style="font-size:11px;color:#9D5CF6">👥 ${s.tradersCount} traders</span>` : ""}
+      <span style="font-size:11px;color:#64748B">${s.diasRestantes}d restantes</span>
     <div style="display:flex;gap:8px">
-      <button class="btn-purple" style="flex:1" onclick="ejecutarSenal(${s.id},'${s.titulo}')">COMPRAR $${s.stake}</button>
+      <button class="btn-purple" style="flex:1" onclick="ejecutarSenal(${s.id},this)" data-titulo="${esc(s.titulo)}">COMPRAR $${s.stake}</button>
       <button class="btn-gray" style="flex:1" onclick="saltarSenal(${s.id})">SALTAR</button>
     </div>
   </div>`;
 }
 
-async function ejecutarSenal(id, titulo) {
+async function ejecutarSenal(id, btn) {
+  const titulo = btn?.dataset?.titulo || "";
   showPulse();
-  const r = await fetch(`${API}/signals/${id}/ejecutar`, { method:"POST" });
-  const d = await r.json();
-  if (d.success) { showToast(`✅ ${titulo}`, "win"); fetchSenales(); fetchPosiciones(); fetchStatus(); }
+  try {
+    const r = await fetch(`${API}/signals/${id}/ejecutar`, { method:"POST" });
+    const d = await r.json();
+    if (d.success) { showToast(`✅ ${titulo}`, "win"); fetchSenales(); fetchPosiciones(); fetchStatus(); }
+    else showToast(`⚠️ ${d.error||"Error al ejecutar"}`, "neutral");
+  } catch(e) { showToast("⚠️ Sin conexión con el servidor", "neutral"); }
 }
 
 async function saltarSenal(id) {
@@ -598,6 +646,8 @@ async function fetchPosiciones() {
     const unrealized = pos.reduce((s, t) => s + (t.pnl || 0), 0);
     if (document.getElementById("unrealPnl"))
       document.getElementById("unrealPnl").textContent = `${signPN(unrealized)}$${fmt(Math.abs(unrealized))}`;
+    if (document.getElementById("badgePosiciones"))
+      document.getElementById("badgePosiciones").textContent = pos.length;
 
     const html = pos.length === 0
       ? `<div style="text-align:center;color:#64748B;padding:30px">Sin posiciones abiertas</div>`
@@ -616,7 +666,7 @@ function renderPosicion(t) {
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
       <div>
         <span class="cat-badge" style="background:${cc}22;color:${cc};font-size:9px">${t.categoria}</span>
-        <div style="font-size:13px;font-weight:600;margin-top:4px">${t.titulo}</div>
+        <div style="font-size:13px;font-weight:600;margin-top:4px">${esc(t.titulo)}</div>
         <div style="font-size:11px;color:#64748B;margin-top:2px">${entrada}% → <span style="color:${actual>=entrada?"#00D97E":"#FF4560"}">${actual}%</span> · Stake: $${fmt(t.stake)}</div>
       </div>
       <div style="text-align:right">
@@ -625,22 +675,35 @@ function renderPosicion(t) {
       </div>
     </div>
     <div style="display:flex;gap:6px">
-      <button class="btn-green" style="flex:1;font-size:11px;padding:6px" onclick="aumentarPosicion(${t.id},'${t.titulo}')">+ AUMENTAR</button>
-      <button class="btn-red"   style="flex:1;font-size:11px;padding:6px" onclick="cerrarPosicion(${t.id},'${t.titulo}',${t.oddsActual},${t.stake})">✕ CERRAR $${fmt(t.stake * (t.oddsActual||1))}</button>
+      <button class="btn-green" style="flex:1;font-size:11px;padding:6px" onclick="aumentarPosicion(${t.id},this)" data-titulo="${esc(t.titulo)}">+ AUMENTAR</button>
+      <button class="btn-red"   style="flex:1;font-size:11px;padding:6px" onclick="cerrarPosicion(${t.id},this)" data-titulo="${esc(t.titulo)}" data-odds="${t.oddsActual}" data-stake="${t.stake}">✕ CERRAR $${fmt(t.stake * (t.oddsActual||1))}</button>
     </div>
   </div>`;
 }
 
-async function cerrarPosicion(id, titulo, oddsActual, stake) {
-  if (!confirm(`¿Cerrar "${titulo}"?\nRecibirás: $${fmt(stake * oddsActual)}`)) return;
+async function cerrarPosicion(id, btn) {
+  const titulo   = btn.dataset.titulo || "";
+  const oddsActual = parseFloat(btn.dataset.odds);
+  const stake    = parseFloat(btn.dataset.stake);
+  const ok = await abrirModal({
+    icono:"🔒", titulo:"Cerrar posición",
+    mensaje:`¿Cerrar <b style="color:#E2E8F0">${esc(titulo)}</b>?<br><span style="color:#64748B;font-size:12px">Recibirás aprox: <span class="mono" style="color:#00D97E">$${fmt(stake * (oddsActual||1))}</span></span>`,
+    confirmTxt:"Cerrar", confirmTipo:"red",
+  });
+  if (!ok) return;
   const r = await fetch(`${API}/trades/${id}/cerrar`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({}) });
   const d = await r.json();
   if (d.success) { showToast(`✅ Cerrado: ${signPN(d.pnl)}$${fmt(Math.abs(d.pnl))}`, d.pnl >= 0 ? "win" : "loss"); fetchPosiciones(); fetchStatus(); fetchHistorial(); }
 }
 
-async function aumentarPosicion(id, titulo) {
-  const monto = prompt(`¿Cuánto quieres agregar a "${titulo}"?\nEscribe el monto en dólares:`);
-  if (!monto || isNaN(monto)) return;
+async function aumentarPosicion(id, btn) {
+  const titulo = btn.dataset.titulo || "";
+  const monto = await abrirModal({
+    icono:"📈", titulo:"Aumentar posición",
+    mensaje:`¿Cuánto quieres agregar a <b style="color:#E2E8F0">${esc(titulo)}</b>?`,
+    input:true, inputDefault:"3", confirmTxt:"Aumentar", confirmTipo:"green",
+  });
+  if (monto === null) return;
   const r = await fetch(`${API}/trades/${id}/aumentar`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ monto: parseFloat(monto) }) });
   const d = await r.json();
   if (d.success) { showPulse(); showToast(`✅ Aumentado: Nuevo total $${fmt(d.nuevoStake)}`, "win"); fetchPosiciones(); fetchStatus(); }
@@ -660,7 +723,7 @@ async function fetchHistorial() {
       return `
       <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1E2030;font-size:12px">
         <span style="color:#64748B;min-width:38px;font-size:10px">${hora}</span>
-        <span style="flex:1;color:#E2E8F0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.titulo}</span>
+        <span style="flex:1;color:#E2E8F0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.titulo)}</span>
         <span class="mono" style="color:#F59E0B;flex-shrink:0">${Math.round((t.oddsEntrada||0)*100)}%</span>
         <span class="mono" style="color:#64748B;flex-shrink:0">$${fmt(t.stake)}</span>
         <span class="mono" style="color:${colorPN(t.pnl)};flex-shrink:0;font-weight:700">${signPN(t.pnl)}$${fmt(Math.abs(t.pnl||0))}</span>
@@ -685,7 +748,7 @@ async function fetchTraders() {
       return `
       <div style="margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px">
-          <span>${t.alias || t.wallet}</span>
+          <span>${esc(t.alias || t.wallet)}</span>
           <span style="color:#9D5CF6;font-weight:700">${t.winRate}% WR</span>
         </div>
         <div style="background:#1E2030;border-radius:4px;height:5px">
@@ -706,8 +769,8 @@ function renderTrader(t) {
   <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #1E2030">
     <div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#7C3AED,#9D5CF6);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0">${initials}</div>
     <div style="flex:1;min-width:0">
-      <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.alias || t.wallet+"…"}</div>
-      <div style="font-size:10px;color:#64748B">${t.categoria} · activo ${t.activo}</div>
+      <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.alias || t.wallet+"…")}</div>
+      <div style="font-size:10px;color:#64748B">${esc(t.categoria)} · activo ${esc(t.activo)}</div>
     </div>
     <div style="text-align:center;min-width:36px">
       <div style="font-size:11px;font-weight:700;color:${sc}">${t.score}</div>
@@ -717,13 +780,14 @@ function renderTrader(t) {
       <div class="mono" style="font-size:11px;font-weight:700;color:#00D97E">+${t.roi}%</div>
       <div style="font-size:9px;color:#64748B">ROI</div>
     </div>
-    <button onclick="toggleTrader('${t.wallet}',this)" style="background:${t.copiando?"#7C3AED":"#1A1C26"};border:1px solid ${t.copiando?"#7C3AED":"#1E2030"};border-radius:6px;padding:4px 8px;color:${t.copiando?"#fff":"#64748B"};font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">
+    <button onclick="toggleTrader(this)" data-wallet="${esc(t.wallet)}" style="background:${t.copiando?"#7C3AED":"#1A1C26"};border:1px solid ${t.copiando?"#7C3AED":"#1E2030"};border-radius:6px;padding:4px 8px;color:${t.copiando?"#fff":"#64748B"};font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">
       ${t.copiando?"✓ COPY":"COPY"}
     </button>
   </div>`;
 }
 
-async function toggleTrader(wallet, btn) {
+async function toggleTrader(btn) {
+  const wallet = btn.dataset.wallet;
   const activo = btn.textContent.includes("✓");
   // Feedback inmediato
   btn.textContent      = activo ? "COPY" : "✓ COPY";
@@ -807,6 +871,16 @@ function updateStake(val) {
   fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ stake: val }) });
 }
 
+function updateHold(val) {
+  document.getElementById("holdVal").textContent = `${val}h`;
+  fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ maxHoldHoras: parseInt(val) }) });
+}
+
+function updateDias(val) {
+  document.getElementById("diasVal").textContent = `≤${val}d`;
+  fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ maxDiasRestantes: parseInt(val) }) });
+}
+
 function updateOdds(val) {
   document.getElementById("oddsVal").textContent = `${val}%`;
   if (document.getElementById("oddsValM"))
@@ -860,7 +934,8 @@ async function fetchMisPosiciones() {
       const icono     = p.icono
         ? `<img src="${p.icono}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'">`
         : `<div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#1E2030,#2A2D3A);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px">⬡</div>`;
-      const slugJS    = (p.slug || "").replace(/'/g, "\\'");
+      const slugEsc   = esc(p.slug || "")
+;
 
       // Barra de mercado
       const barPct    = ahoraNum != null ? ahoraNum : 0;
@@ -879,9 +954,9 @@ async function fetchMisPosiciones() {
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
           ${icono}
           <div style="flex:1;overflow:hidden">
-            <div style="color:#E2E8F0;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.titulo}</div>
+            <div style="color:#E2E8F0;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.titulo)}</div>
             <div style="font-size:10px;margin-top:1px">
-              <span style="color:${outColor};font-weight:700">${p.outcome || "OPEN"}</span>
+              <span style="color:${outColor};font-weight:700">${esc(p.outcome || "OPEN")}</span>
               <span style="color:#64748B"> · ${p.shares} shares</span>
             </div>
           </div>
@@ -914,8 +989,8 @@ async function fetchMisPosiciones() {
 
         <!-- Botones -->
         <div style="display:flex;gap:6px">
-          <button onclick="comprarMas('${slugJS}','${p.titulo.replace(/'/g,"")}')" style="flex:1;padding:7px;border:none;border-radius:8px;background:#16261c;color:#00D97E;font-weight:700;cursor:pointer;font-size:11px">+ Comprar</button>
-          <button onclick="venderPos('${slugJS}','${p.titulo.replace(/'/g,"")}',${p.shares})" style="flex:1;padding:7px;border:none;border-radius:8px;background:#2a1518;color:#FF4560;font-weight:700;cursor:pointer;font-size:11px">Vender</button>
+          <button onclick="comprarMas(this)" data-slug="${slugEsc}" data-titulo="${esc(p.titulo)}" style="flex:1;padding:7px;border:none;border-radius:8px;background:#16261c;color:#00D97E;font-weight:700;cursor:pointer;font-size:11px">+ Comprar</button>
+          <button onclick="venderPos(this)" data-slug="${slugEsc}" data-titulo="${esc(p.titulo)}" data-shares="${p.shares}" style="flex:1;padding:7px;border:none;border-radius:8px;background:#2a1518;color:#FF4560;font-weight:700;cursor:pointer;font-size:11px">Vender</button>
         </div>
       </div>`;
     }).join("");
@@ -986,10 +1061,12 @@ function abrirModal(opts) {
   });
 }
 
-async function comprarMas(slug, titulo) {
+async function comprarMas(btn) {
+  const slug   = btn.dataset.slug;
+  const titulo = btn.dataset.titulo;
   const monto = await abrirModal({
     icono: "🟢", titulo: "Comprar más",
-    mensaje: `¿Cuánto quieres invertir en <b style="color:#E2E8F0">${titulo}</b>?`,
+    mensaje: `¿Cuánto quieres invertir en <b style="color:#E2E8F0">${esc(titulo)}</b>?`,
     input: true, inputDefault: "3", confirmTxt: "Comprar", confirmTipo: "green",
   });
   if (monto === null) return;
@@ -1006,11 +1083,14 @@ async function comprarMas(slug, titulo) {
   } catch(e) { showToast("⚠️ Sin conexión", "neutral"); }
 }
 
-async function venderPos(slug, titulo, sharesTotal) {
+async function venderPos(btn) {
+  const slug       = btn.dataset.slug;
+  const titulo     = btn.dataset.titulo;
+  const sharesTotal = btn.dataset.shares;
   const total = parseInt(sharesTotal) || 0;
   const val = await abrirModal({
     icono: "🔴", titulo: "Vender posición",
-    mensaje: `¿Cuántos shares de <b style="color:#E2E8F0">${titulo}</b> quieres vender?`,
+    mensaje: `¿Cuántos shares de <b style="color:#E2E8F0">${esc(titulo)}</b> quieres vender?`,
     input: true, inputDefault: total, inputLabel: "SHARES A VENDER", inputPrefix: "",
     inputHelp: `Tienes ${total} shares · usa los botones o escribe la cantidad`,
     quickMax: total, confirmTxt: "Vender", confirmTipo: "red",

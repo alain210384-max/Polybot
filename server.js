@@ -13,16 +13,31 @@ app.use(express.static(path.join(__dirname, "public")));
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
 // ── CONFIG ─────────────────────────────────────────────────────────────────────
-let CFG = {
-  minOdds:      0.70,
-  maxOdds:      0.85,
-  minLiquidity: 300,
-  budget:       parseFloat(process.env.DAILY_BUDGET)    || 59,
-  stake:        parseFloat(process.env.STAKE_PER_TRADE) || 3,
-  keyId:        process.env.POLYMARKET_KEY_ID,
-  secretKey:    process.env.POLYMARKET_SECRET_KEY,
-  autoComprar:  true,  // Sistema 1: screener auto-buy
-  autoCopiar:   true,  // Sistema 2: copy trader
+const CFG_FILE = path.join(__dirname, "cfg.json");
+const CFG_DEFAULTS = {
+  minOdds:          0.70,
+  maxOdds:          0.85,
+  minLiquidity:     300,
+  budget:           parseFloat(process.env.DAILY_BUDGET)    || 59,
+  stake:            parseFloat(process.env.STAKE_PER_TRADE) || 3,
+  keyId:            process.env.POLYMARKET_KEY_ID,
+  secretKey:        process.env.POLYMARKET_SECRET_KEY,
+  autoComprar:      true,
+  autoCopiar:       true,
+  maxHoldHoras:     24,
+  maxDiasRestantes: 7,
+};
+let CFG = (() => {
+  try {
+    const saved = JSON.parse(fs.readFileSync(CFG_FILE, "utf8"));
+    // Credenciales siempre de env vars, nunca del archivo
+    return { ...CFG_DEFAULTS, ...saved, keyId: CFG_DEFAULTS.keyId, secretKey: CFG_DEFAULTS.secretKey };
+  } catch(_) {}
+  return { ...CFG_DEFAULTS };
+})();
+const guardarCFG = () => {
+  const { keyId, secretKey, ...sinCredenciales } = CFG;
+  try { fs.writeFileSync(CFG_FILE, JSON.stringify(sinCredenciales, null, 2)); } catch(_) {}
 };
 
 const GAMMA_API = "https://gamma-api.polymarket.com";
@@ -133,11 +148,28 @@ let senalesPendientes  = [];
 let posicionesAbiertas = [];
 let historialTrades    = [];
 let mercadosActivos    = [];
-const HISTORY_FILE = path.join(__dirname, "balance-history.json");
-let historialBalance = (() => {
+const HISTORY_FILE  = path.join(__dirname, "balance-history.json");
+const JSONBIN_KEY   = process.env.JSONBIN_KEY  || "";
+const JSONBIN_BIN   = process.env.JSONBIN_BIN  || "";
+
+// Carga historial: primero intenta JSONBin (persistente en Render), luego archivo local
+const cargarHistorialBalance = async () => {
+  if (JSONBIN_KEY && JSONBIN_BIN) {
+    try {
+      const r = await axios.get(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN}/latest`,
+        { headers: { "X-Master-Key": JSONBIN_KEY }, timeout: 8000 });
+      const data = r.data?.record?.historial;
+      if (Array.isArray(data) && data.length) {
+        console.log(`☁️  Historial cargado de JSONBin (${data.length} días)`);
+        return data;
+      }
+    } catch(e) { console.log("⚠️ JSONBin load:", e.message); }
+  }
   try { return JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8")); } catch(_) {}
   return [{ dia: "Inicio", valor: CFG.budget }];
-})();
+};
+
+let historialBalance = [{ dia: "Inicio", valor: CFG.budget }];
 
 // Copy trading
 let copiandoSet     = new Set();
@@ -150,8 +182,16 @@ let balanceEnPos     = null;
 let balanceTotalReal = null;
 let balanceBaseReal  = null;
 
-const guardarHistorialBalance = () => {
-  try { fs.writeFileSync(HISTORY_FILE, JSON.stringify(historialBalance.slice(-90))); } catch(_) {}
+const guardarHistorialBalance = async () => {
+  const data = historialBalance.slice(-90);
+  try { fs.writeFileSync(HISTORY_FILE, JSON.stringify(data)); } catch(_) {}
+  if (JSONBIN_KEY && JSONBIN_BIN) {
+    try {
+      await axios.put(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN}`,
+        { historial: data },
+        { headers: { "X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json" }, timeout: 8000 });
+    } catch(e) { console.log("⚠️ JSONBin save:", e.message); }
+  }
 };
 
 const actualizarBalanceReal = async () => {
@@ -269,8 +309,10 @@ const fetchMercadosReales = async () => {
       const batch = pages.flat();
       allMarkets.push(...batch);
       // Para cuando la última página del batch devuelve menos de PAGE resultados
-      const lastFull = pages.find((p, i) => i === pages.length - 1);
-      if (batch.length < PAGE * BATCH || (lastFull && lastFull.length < PAGE)) break;
+      // Solo salir si la última página tiene datos pero menos de PAGE (fin real de la lista).
+      // Si lastPage es [] por error de red, no salir — podría haber más páginas válidas.
+      const lastPage = pages[pages.length - 1];
+      if (batch.length < PAGE * BATCH || (lastPage && lastPage.length > 0 && lastPage.length < PAGE)) break;
     }
     console.log(`📊 ${allMarkets.length} mercados descargados`);
 
@@ -303,7 +345,7 @@ const fetchMercadosReales = async () => {
         console.log(`⚡ EN VIVO: ${m.question?.slice(0,55)} | ${(prob*100).toFixed(0)}%`);
       } else {
         if (prob < CFG.minOdds || prob > CFG.maxOdds) continue;
-        if (diasRestantes < 0 || diasRestantes > 90) continue;
+        if (diasRestantes < 0 || diasRestantes > CFG.maxDiasRestantes) continue;
       }
 
       validos.push({
@@ -477,6 +519,7 @@ const ejecutarCopyTrade = async (act, wallet) => {
   const title = act.market?.question || act.title || slug || "Copy Trade";
   const prob  = parseFloat(act.price || act.avgPrice || 0.75);
   if (!prob || prob < 0.50 || prob > 0.98 || !slug) return;
+  if (posicionesAbiertas.find(p => p.slug === slug)) return; // Evitar doble compra del mismo mercado
 
   const shares = parseFloat((CFG.stake / prob).toFixed(2));
 
@@ -512,11 +555,12 @@ const cerrarCopyTrade = async (act, wallet) => {
   const pnl = parseFloat(((probSalida-pos.oddsEntrada)*pos.shares).toFixed(2));
   pos.estado="cerrado_copy"; pos.pnl=pnl; pos.oddsActual=probSalida;
   pnlHoy=parseFloat((pnlHoy+pnl).toFixed(2)); balanceReal=parseFloat((balanceReal+pnl).toFixed(2));
-  if(pnl>=0) ganados++; else perdidos++;
+  if(pnl>=0) { ganados++; rachaPerder=0; }
+  else       { perdidos++; rachaPerder++; if(rachaPerder>=5) { circuitBreaker=true; console.log("🚨 Circuit breaker activado"); } }
   presupuestoUsado=parseFloat(Math.max(0,presupuestoUsado-pos.stake).toFixed(2));
   historialTrades.unshift({...pos, cerradaEn:new Date().toISOString()});
   posicionesAbiertas.splice(idx,1);
-  console.log(`📋 COPY cerrado PnL $${pnl}`);
+  console.log(`📋 COPY cerrado PnL $${pnl} | racha: ${rachaPerder}`);
 };
 
 const copiarTrades = async () => {
@@ -548,15 +592,19 @@ const copiarTrades = async () => {
 };
 
 // ── TIMERS ─────────────────────────────────────────────────────────────────────
-// Al arrancar: sincroniza posiciones reales PRIMERO, luego escanea y compra
-actualizarBalanceReal().then(() => sincronizarPosiciones()).then(() =>
+// Al arrancar: carga historial (JSONBin o archivo), luego inicia el bot
+cargarHistorialBalance().then(data => {
+  historialBalance = data;
+  return actualizarBalanceReal();
+}).then(() => sincronizarPosiciones()).then(() =>
   fetchMercadosReales().then(() => setTimeout(autoComprarSenales, 5000))
 );
-setInterval(fetchMercadosReales,  5*60*1000);   // scan cada 5 min
-setInterval(autoComprarSenales,   3*60*1000);   // Sistema1: compra cada 3 min
-setInterval(copiarTrades,         2*60*1000);   // Sistema2: copy cada 2 min
-setInterval(actualizarBalanceReal,  30*1000);   // balance cada 30s
-setInterval(sincronizarPosiciones,  60*1000);   // re-sync posiciones cada 1 min
+setInterval(fetchMercadosReales,      5*60*1000);  // scan cada 5 min
+setInterval(autoComprarSenales,       3*60*1000);  // Sistema1: compra cada 3 min
+setInterval(copiarTrades,             2*60*1000);  // Sistema2: copy cada 2 min
+setInterval(actualizarBalanceReal,      30*1000);  // balance cada 30s
+setInterval(sincronizarPosiciones,      60*1000);  // re-sync posiciones cada 1 min
+setInterval(cerrarPosicionesAntiguas, 30*60*1000); // cierre automático cada 30 min
 
 fetchLeaderboard().then(t => {
   tradersCache = t;
@@ -567,10 +615,43 @@ setInterval(async () => {
   autoSeguirTopTraders(25);
 }, 60*60*1000);
 
+// Cierra posiciones que llevan más de maxHoldHoras abiertas
+const cerrarPosicionesAntiguas = async () => {
+  const limiteMs = CFG.maxHoldHoras * 60 * 60 * 1000;
+  const ahora    = Date.now();
+  const antiguas = posicionesAbiertas.filter(p =>
+    p.abiertaEn && (ahora - new Date(p.abiertaEn).getTime()) > limiteMs
+  );
+  if (!antiguas.length) return;
+  console.log(`⏰ Cerrando ${antiguas.length} posiciones con más de ${CFG.maxHoldHoras}h`);
+  for (const pos of antiguas) {
+    if (modoReal && pos.slug) {
+      try { await pmCerrar(pos.slug); }
+      catch(e) { console.log(`⚠️ Auto-close err ${pos.slug}: ${e.message}`); }
+    }
+    const precioActual = pos.slug ? await pmPrecioActual(pos.slug).catch(()=>null) : null;
+    const odds = precioActual || pos.oddsActual || pos.oddsEntrada;
+    const pnl  = parseFloat((pos.stake * odds - pos.stake).toFixed(2));
+    pos.estado = "cerrado_tiempo"; pos.pnl = pnl;
+    pnlHoy    = parseFloat((pnlHoy + pnl).toFixed(2));
+    balanceReal = parseFloat((balanceReal + pnl).toFixed(2));
+    if (pnl >= 0) { ganados++; rachaPerder = 0; }
+    else          { perdidos++; rachaPerder++; if (rachaPerder >= 5) circuitBreaker = true; }
+    presupuestoUsado = parseFloat(Math.max(0, presupuestoUsado - pos.stake).toFixed(2));
+    historialTrades.unshift({ ...pos, cerradaEn: new Date().toISOString() });
+    const idx = posicionesAbiertas.findIndex(p => p.id === pos.id);
+    if (idx !== -1) posicionesAbiertas.splice(idx, 1);
+    console.log(`⏰ Cerrado: ${pos.titulo?.slice(0,40)} | PnL $${pnl}`);
+  }
+  if (modoReal) setTimeout(actualizarBalanceReal, 2000);
+};
+
 cron.schedule("0 0 * * *", () => {
   pnlHoy=0; tradesHoy=0; ganados=0; perdidos=0;
   presupuestoUsado=0; rachaPerder=0; circuitBreaker=false;
-  historialBalance.push({ dia:new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit"}), valor:balanceReal });
+  const valorDia = balanceTotalReal ?? balanceReal;
+  historialBalance.push({ dia:new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit"}), valor:valorDia });
+  guardarHistorialBalance();
 });
 
 // ── ENDPOINTS ──────────────────────────────────────────────────────────────────
@@ -592,7 +673,7 @@ app.get("/api/status", (req, res) => {
     keyIdActivo:modoReal?pmUs.keyId?.slice(0,8)+"…":null,
     tradersCopiados:copiandoSet.size,
     autoComprar:CFG.autoComprar, autoCopiar:CFG.autoCopiar,
-    maxPositiones:maxPos(),
+    maxPositiones:maxPos(), maxHoldHoras:CFG.maxHoldHoras, maxDiasRestantes:CFG.maxDiasRestantes,
   });
 });
 
@@ -625,10 +706,14 @@ app.get("/api/trades/historial", async (req, res) => {
           tipo: isBuy ? "COMPRA" : "VENTA",
         };
       });
-      return res.json([...historialTrades, ...fromApi].slice(0, 50));
+      const slugsLocales = new Set(historialTrades.map(t => t.slug).filter(Boolean));
+      const fromApiUnico = fromApi.filter(a => !slugsLocales.has(a.slug));
+      // Solo trades cerrados/resueltos — los abiertos van en "Posiciones Abiertas"
+      const cerrados = [...historialTrades, ...fromApiUnico].filter(t => t.estado && t.estado !== "abierto");
+      return res.json(cerrados.slice(0, 50));
     } catch(e) { /* fallback */ }
   }
-  res.json(historialTrades.slice(0, 50));
+  res.json(historialTrades.filter(t => t.estado && t.estado !== "abierto").slice(0, 50));
 });
 app.get("/api/balance/historial", (req, res) => res.json(historialBalance));
 
@@ -659,16 +744,28 @@ app.post("/api/signals/:id/saltar", (req, res) => {
   res.json({ success:true });
 });
 
-app.post("/api/trades/:id/cerrar", (req, res) => {
+app.post("/api/trades/:id/cerrar", async (req, res) => {
   const idx = posicionesAbiertas.findIndex(t=>t.id===parseInt(req.params.id));
   if (idx===-1) return res.status(404).json({ error:"No encontrada" });
   const trade = posicionesAbiertas[idx];
+  // Precio de mercado actual para P&L real (oddsActual nunca se actualiza solo)
+  if (trade.slug) {
+    const precioActual = await pmPrecioActual(trade.slug).catch(() => null);
+    if (precioActual) trade.oddsActual = precioActual;
+  }
+  // Cerrar en Polymarket si es modo real
+  if (modoReal && trade.slug) {
+    try { await pmCerrar(trade.slug); }
+    catch(e) { console.log(`⚠️ Close err: ${e.response?.data?.message||e.message}`); }
+  }
   const pnl = parseFloat((trade.stake*trade.oddsActual-trade.stake).toFixed(2));
   trade.estado="cerrado_manual"; trade.pnl=pnl;
-  pnlHoy+=pnl; balanceReal=parseFloat((balanceReal+pnl).toFixed(2));
-  if(pnl>0) ganados++; else perdidos++;
+  pnlHoy=parseFloat((pnlHoy+pnl).toFixed(2)); balanceReal=parseFloat((balanceReal+pnl).toFixed(2));
+  if(pnl>=0) { ganados++; rachaPerder=0; }
+  else       { perdidos++; rachaPerder++; if(rachaPerder>=5) { circuitBreaker=true; console.log("🚨 Circuit breaker activado"); } }
   historialTrades.unshift({...trade, cerradaEn:new Date().toISOString()});
   posicionesAbiertas.splice(idx,1);
+  if (modoReal) setTimeout(actualizarBalanceReal, 2000);
   res.json({ success:true, pnl });
 });
 
@@ -679,7 +776,7 @@ app.post("/api/trades/:id/aumentar", (req, res) => {
   trade.stake = parseFloat((trade.stake+extra).toFixed(2));
   trade.shares = parseFloat((trade.stake/trade.oddsEntrada).toFixed(2));
   trade.potencial=trade.shares; trade.ganancia=parseFloat((trade.potencial-trade.stake).toFixed(2));
-  presupuestoUsado+=extra;
+  presupuestoUsado=parseFloat((presupuestoUsado+extra).toFixed(2));
   res.json({ success:true, nuevoStake:trade.stake, nuevoPotencial:trade.potencial });
 });
 
@@ -805,8 +902,11 @@ app.post("/api/config", (req, res) => {
   if (presupuesto !==undefined) CFG.budget     =parseFloat(presupuesto);
   if (minOdds     !==undefined) CFG.minOdds    =parseFloat(minOdds);
   if (maxOdds     !==undefined) CFG.maxOdds    =parseFloat(maxOdds);
-  if (autoComprar !==undefined) CFG.autoComprar=!!autoComprar;
-  if (autoCopiar  !==undefined) CFG.autoCopiar =!!autoCopiar;
+  if (autoComprar       !==undefined) CFG.autoComprar      =!!autoComprar;
+  if (autoCopiar        !==undefined) CFG.autoCopiar       =!!autoCopiar;
+  if (req.body.maxHoldHoras     !==undefined) CFG.maxHoldHoras     =parseInt(req.body.maxHoldHoras);
+  if (req.body.maxDiasRestantes !==undefined) CFG.maxDiasRestantes =parseInt(req.body.maxDiasRestantes);
+  guardarCFG();
   res.json({ success:true });
 });
 
