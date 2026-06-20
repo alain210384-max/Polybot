@@ -689,32 +689,29 @@ app.get("/api/trades/historial", async (req, res) => {
       const actRes = await pmUs.get("/v1/portfolio/activities", true, { limit: 50 });
       const actArr = Array.isArray(actRes?.activities) ? actRes.activities : [];
       if (req.query.debug) {
-        // Un ejemplo completo de cada tipo de actividad presente (sin repetir)
-        const porTipo = {};
-        for (const a of actArr) { const t = a.type || "?"; if (!porTipo[t]) porTipo[t] = a; }
-        return res.json({ tiposPresentes: actArr.map(a => a.type), ejemplos: porTipo });
+        const resol = actArr.find(a => (a.type || "").includes("RESOLUTION"));
+        return res.json(resol || { sinResolucion: true });
       }
-      const fromApi = actArr.map(a => {
-        const tipo = (a.type || "").replace("ACTIVITY_TYPE_", "");
-        const r    = a.positionResolution || a.trade || a.fill || a.order || {};
-        const ord  = r.aggressor || r.aggressorExecution?.order || {};
-        const meta = r.marketMetadata || ord.marketMetadata || r.beforePosition?.marketMetadata || r.market || {};
-        const titulo = meta.title || meta.question || meta.slug || "";
-        const slug   = meta.slug || r.marketSlug || r.slug || "";
-        const precio = num(r.price) || num(r.avgPx) || num(ord.price) || num(r.avgPrice) || num(r.entryPrice);
-        const stake  = num(r.cost)  || num(r.notional) || num(r.value);
-        const pnl    = num(r.realizedPnl) || num(r.pnl) || num(r.payout) || num(r.profit);
-        const side   = ord.side || r.aggressor?.side || r.side || "";
-        // Resolucion = mercado liquidado (ganado/perdido); venta = cierre manual
-        let estado = "abierto";
-        if (tipo.includes("RESOLUTION") || tipo.includes("SETTLE")) estado = pnl >= 0 ? "ganado" : "perdido";
-        else if (tipo.includes("SELL") || side.includes("SELL"))    estado = "cerrado_manual";
-        return { titulo, slug, oddsEntrada: precio, stake, pnl, estado, abiertaEn: a.createTime || r.createTime };
-      });
-      // Solo trades realmente cerrados Y con titulo valido (evita basura "Trade $0.00")
-      const cerradosApi  = fromApi.filter(t => t.titulo && t.estado !== "abierto");
+      // Solo RESOLUCIONES = mercados liquidados con P&L real.
+      // (Las COMPRAS son posiciones abiertas; los cierres del bot ya estan en cerradosLocales.)
+      const fromApi = actArr
+        .filter(a => (a.type || "").includes("RESOLUTION"))
+        .map(a => {
+          const r      = a.positionResolution || {};
+          const before = r.beforePosition || {};
+          const after  = r.afterPosition  || {};
+          const meta   = before.marketMetadata || after.marketMetadata || {};
+          const titulo = r.market?.question || meta.title || meta.slug || "";
+          const slug   = r.marketSlug || r.market?.slug || meta.slug || "";
+          const precio = num(before.avgPx);                          // precio de entrada
+          const stake  = num(before.cost) || num(before.baseCost);   // costo invertido
+          const pnl    = parseFloat((num(after.realized) - num(before.realized)).toFixed(2)); // P&L realizado
+          const estado = pnl >= 0 ? "ganado" : "perdido";
+          return { titulo, slug, oddsEntrada: precio, stake, pnl, estado, abiertaEn: r.updateTime };
+        })
+        .filter(t => t.titulo);
       const slugsLocales = new Set(cerradosLocales.map(t => t.slug).filter(Boolean));
-      const fromApiUnico = cerradosApi.filter(a => !a.slug || !slugsLocales.has(a.slug));
+      const fromApiUnico = fromApi.filter(a => !a.slug || !slugsLocales.has(a.slug));
       return res.json([...cerradosLocales, ...fromApiUnico].slice(0, 50));
     } catch(e) { /* fallback */ }
   }
