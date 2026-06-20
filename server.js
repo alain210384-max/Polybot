@@ -663,7 +663,9 @@ const copiarTrades = async () => {
 cargarHistorialBalance().then(data => {
   historialBalance = data;
   return actualizarBalanceReal();
-}).then(() => sincronizarPosiciones()).then(() =>
+}).then(() => sincronizarPosiciones())
+  .then(() => actualizarStatsReales())   // stats reales (P&L/WR/trades) desde Polymarket
+  .then(() =>
   fetchMercadosReales().then(() => setTimeout(autoComprarSenales, 20000)) // copy va primero
 );
 setInterval(fetchMercadosReales,      5*60*1000);  // scan cada 5 min
@@ -671,6 +673,7 @@ setInterval(autoComprarSenales,       3*60*1000);  // Sistema1: compra cada 3 mi
 setInterval(copiarTrades,             2*60*1000);  // Sistema2: copy cada 2 min
 setInterval(actualizarBalanceReal,      30*1000);  // balance cada 30s
 setInterval(sincronizarPosiciones,      60*1000);  // re-sync posiciones cada 1 min
+setInterval(() => actualizarStatsReales(), 2*60*1000);  // stats reales cada 2 min
 
 fetchLeaderboard().then(async t => {
   tradersCache = t;
@@ -727,11 +730,18 @@ cron.schedule("0 0 * * *", () => {
 app.get("/api/status", (req, res) => {
   const wr = (ganados+perdidos)>0 ? (ganados/(ganados+perdidos)*100) : 0;
   const balanceMostrado = balanceTotalReal !== null ? balanceTotalReal : balanceReal;
+  // En modo real usamos las stats calculadas desde Polymarket (sobreviven restarts);
+  // si aún no están listas, caemos a los contadores en memoria.
+  const usarReal = modoReal && statsReales.listo;
   res.json({
     botActivo, circuitBreaker, balance:balanceMostrado,
     balanceCash, balanceEnPos, balanceTotalReal, balanceBase:balanceBaseReal,
-    pnlHoy:parseFloat(pnlHoy.toFixed(2)), tradesHoy, ganados, perdidos,
-    winRate:parseFloat(wr.toFixed(1)),
+    pnlHoy:    usarReal ? statsReales.pnlHoy    : parseFloat(pnlHoy.toFixed(2)),
+    tradesHoy: usarReal ? statsReales.trades    : tradesHoy,
+    ganados:   usarReal ? statsReales.ganados   : ganados,
+    perdidos:  usarReal ? statsReales.perdidos  : perdidos,
+    winRate:   usarReal ? statsReales.winRate   : parseFloat(wr.toFixed(1)),
+    pnlTotal:  usarReal ? statsReales.pnl       : null,
     presupuestoTotal:    balanceTotalReal !== null ? balanceTotalReal : CFG.budget,
     presupuestoUsado:    balanceEnPos     !== null ? balanceEnPos     : parseFloat(presupuestoUsado.toFixed(2)),
     presupuestoRestante: balanceCash      !== null ? balanceCash      : parseFloat((CFG.budget - presupuestoUsado).toFixed(2)),
@@ -790,6 +800,41 @@ app.get("/api/trades/historial", async (req, res) => {
   res.json(cerradosLocales.slice(0, 50));
 });
 app.get("/api/balance/historial", (req, res) => res.json(historialBalance));
+
+// ── STATS REALES: P&L / Win Rate / Trades calculados desde las resoluciones de Polymarket ──
+// (Los contadores en memoria se reinician en cada restart de Render; esto lee la verdad de la API.)
+let statsReales = { trades:0, ganados:0, perdidos:0, winRate:0, pnl:0, pnlHoy:0, tradesHoy:0, listo:false };
+const parseMs = v => {
+  if (v == null) return null;
+  if (typeof v === "number") return v < 1e12 ? v * 1000 : v;   // segundos o ms
+  const t = Date.parse(v);
+  return isNaN(t) ? null : t;
+};
+const actualizarStatsReales = async () => {
+  if (!modoReal) return;
+  try {
+    const actRes = await pmUs.get("/v1/portfolio/activities", true, { limit: 100 });
+    const actArr = Array.isArray(actRes?.activities) ? actRes.activities : [];
+    const hoy = diaCalendario(Date.now());
+    let g = 0, p = 0, pnl = 0, pnlHoy = 0, tradesHoy = 0;
+    for (const a of actArr) {
+      if (!(a.type || "").includes("RESOLUTION")) continue;
+      const r = a.positionResolution || {};
+      const val = parseFloat((num((r.afterPosition||{}).realized) - num((r.beforePosition||{}).realized)).toFixed(2));
+      if (val >= 0) g++; else p++;
+      pnl += val;
+      const ms = parseMs(r.updateTime);
+      if (ms && diaCalendario(ms) === hoy) { pnlHoy += val; tradesHoy++; }
+    }
+    statsReales = {
+      trades: g + p, ganados: g, perdidos: p,
+      winRate: (g + p) > 0 ? parseFloat((g / (g + p) * 100).toFixed(1)) : 0,
+      pnl: parseFloat(pnl.toFixed(2)),
+      pnlHoy: parseFloat(pnlHoy.toFixed(2)),
+      tradesHoy, listo: true,
+    };
+  } catch(e) { console.log("⚠️ Stats reales:", e.message); }
+};
 
 app.get("/api/traders", async (req, res) => {
   if (!tradersCache.length) tradersCache = await fetchLeaderboard();

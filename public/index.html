@@ -137,6 +137,7 @@
   <div class="stat-card" style="flex:1;min-width:110px">
     <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">P&L Hoy</div>
     <div class="mono" id="statPnl" style="font-size:18px;font-weight:800;color:#00D97E">+$0.00</div>
+    <div style="font-size:10px;color:#64748B;margin-top:2px">Total: <span id="statPnlTotal" class="mono">—</span></div>
   </div>
   <div class="stat-card" style="flex:1;min-width:110px">
     <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Win Rate</div>
@@ -518,6 +519,13 @@ function updateUI() {
     document.getElementById("statEnPos").textContent = `$${fmt(estado.balanceEnPos)}`;
   document.getElementById("statPnl").textContent     = `${signPN(pnl)}$${fmt(Math.abs(pnl))}`;
   document.getElementById("statPnl").style.color     = colorPN(pnl);
+  const elTot = document.getElementById("statPnlTotal");
+  if (elTot) {
+    if (estado.pnlTotal != null) {
+      elTot.textContent = `${signPN(estado.pnlTotal)}$${fmt(Math.abs(estado.pnlTotal))}`;
+      elTot.style.color = colorPN(estado.pnlTotal);
+    } else { elTot.textContent = "—"; elTot.style.color = "#64748B"; }
+  }
   document.getElementById("statWR").textContent      = `${wr}%`;
   document.getElementById("statWR").style.color      = wr >= 74 ? "#00D97E" : "#FF4560";
   document.getElementById("statTrades").textContent  = estado.tradesHoy || 0;
