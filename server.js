@@ -57,6 +57,11 @@ const fuerzaPorOrigen = slug =>
 : origenPorSlug[slug] === "MANUAL"   ? "✋ MANUAL"
 : "SYNC";
 
+// Día calendario en la zona del usuario (Arizona -07:00 por defecto)
+const diaCalendario = ms => Math.floor((ms + (CFG.tzOffsetHoras ?? -7) * 3600000) / 86400000);
+// 0 = cierra HOY, 1 = cierra MAÑANA, 2+ más adelante (99 si no hay fecha)
+const diaCierreDeMs = endMs => endMs ? (diaCalendario(endMs) - diaCalendario(Date.now())) : 99;
+
 const GAMMA_API = "https://gamma-api.polymarket.com";
 const DATA_API  = "https://data-api.polymarket.com";
 
@@ -337,11 +342,6 @@ const fetchMercadosReales = async () => {
     const seen  = new Set();
     const validos = [];
 
-    // Día calendario en la zona del usuario (Arizona -07:00 por defecto) para clasificar cierre
-    const TZ_OFFSET_MS = (CFG.tzOffsetHoras ?? -7) * 3600000;
-    const diaCal = ms => Math.floor((ms + TZ_OFFSET_MS) / 86400000);
-    const diaHoy = diaCal(ahora);
-
     for (const m of allMarkets) {
       if (!m.active || m.closed) continue;
       const uid = String(m.id || m.slug);
@@ -358,7 +358,7 @@ const fetchMercadosReales = async () => {
       const endMs        = m.endDate       ? new Date(m.endDate).getTime()       : null;
       const diasRestantes = endMs ? Math.ceil((endMs - ahora) / 86400000) : 30;
       // diaCierre = 0 cierra HOY, 1 cierra MAÑANA, 2+ más adelante (en zona del usuario)
-      const diaCierre = endMs ? (diaCal(endMs) - diaHoy) : 99;
+      const diaCierre = diaCierreDeMs(endMs);
       // EN VIVO = juego ya empezó Y resuelve en ≤2 días (no captura eventos de meses)
       const enVivo = !!(gameStartMs && gameStartMs < ahora && endMs && endMs > ahora && diasRestantes <= 2);
 
@@ -544,6 +544,17 @@ const getTraderActivity = async (wallet) => {
   } catch(e) { return []; }
 };
 
+// Fecha de cierre (ms) de un mercado: de los datos de la actividad o consultando la API
+const getMarketEndMs = async (slug, act) => {
+  const raw = act?.market?.endDate || act?.endDate || act?.market?.end_date_iso || act?.endDateIso;
+  if (raw) return new Date(raw).getTime();
+  try {
+    const r = await pmUs.get(`/v1/markets/${slug}`);
+    const m = r?.market || (Array.isArray(r?.markets) ? r.markets[0] : null) || r || {};
+    return m.endDate ? new Date(m.endDate).getTime() : null;
+  } catch(_) { return null; }
+};
+
 const ejecutarCopyTrade = async (act, wallet) => {
   if (!botActivo || circuitBreaker || !CFG.autoCopiar) return;
   const disponible = cashDisponible();   // copy trade usa todo el cash (incluida la reserva)
@@ -554,6 +565,14 @@ const ejecutarCopyTrade = async (act, wallet) => {
   const prob  = parseFloat(act.price || act.avgPrice || 0.75);
   if (!prob || prob < 0.50 || prob > 0.98 || !slug) return;
   if (posicionesAbiertas.find(p => p.slug === slug)) return; // Evitar doble compra del mismo mercado
+
+  // Solo copiar si el mercado cierra HOY o MAÑANA (igual que el screener)
+  const endMs     = await getMarketEndMs(slug, act);
+  const diaCierre = diaCierreDeMs(endMs);
+  if (endMs && diaCierre > 1) {
+    console.log(`⏭️ COPY saltado (cierra en ${diaCierre}d, no hoy/mañana): ${title.slice(0,35)}`);
+    return;
+  }
 
   const shares = parseFloat((CFG.stake / prob).toFixed(2));
 
