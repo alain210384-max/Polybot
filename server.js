@@ -274,6 +274,9 @@ const sincronizarPosiciones = async () => {
       const shares = parseFloat(p.netPosition || 0);
       const costo  = parseFloat(p.cost?.value || 0);
       const avgPx  = parseFloat(p.avgPx || 0) || (shares > 0 ? costo / shares : 0);
+      // Fecha de cierre: del metadata si viene; si no, se consulta al mercado (solo 1 vez por posición nueva)
+      let endMs = (meta.endDate || meta.end_date_iso) ? new Date(meta.endDate || meta.end_date_iso).getTime() : null;
+      if (!endMs) { try { endMs = await getMarketEndMs(slug, null); } catch(_) {} }
       posicionesAbiertas.push({
         id:          Date.now() + Math.random(),
         marketId:    slug,
@@ -288,6 +291,7 @@ const sincronizarPosiciones = async () => {
         ganancia:    parseFloat((shares - costo).toFixed(2)),
         pnl:         0,
         fuerza:      fuerzaPorOrigen(slug),
+        endMs:       endMs || null,
         estado:      "abierto",
         abiertaEn:   p.updateTime || new Date().toISOString(),
       });
@@ -399,7 +403,7 @@ const fetchMercadosReales = async () => {
         outcome:  longSide.description || "YES",
         categoria,
         prob: parseFloat(prob.toFixed(4)),
-        diasRestantes, diaCierre, enVivo, intraday, stake: CFG.stake,
+        diasRestantes, diaCierre, enVivo, intraday, endMs, stake: CFG.stake,
         fuerza: enVivo ? "🔴 EN VIVO"
                : intraday ? "📈 INTRADAY"
                : prob >= 0.85 ? "MÁXIMA"
@@ -457,7 +461,7 @@ const ejecutarTrade = async (mercado, stake, fuerza) => {
     titulo:mercado.titulo, categoria:mercado.categoria,
     oddsEntrada:mercado.prob, oddsActual:mercado.prob,
     stake:parseFloat(stake.toFixed(2)), shares, potencial:shares, ganancia,
-    pnl:0, fuerza, tradersCount:mercado.tradersCount||1,
+    pnl:0, fuerza, endMs:mercado.endMs||null, tradersCount:mercado.tradersCount||1,
     estado:"abierto", abiertaEn:new Date().toISOString(),
   };
   marcarOrigen(mercado.slug, "SCREENER");
@@ -611,7 +615,7 @@ const ejecutarCopyTrade = async (act, wallet) => {
     titulo:`[COPY ${wallet.slice(0,6)}…] ${title}`,
     categoria:mapCategoria([],title,slug), oddsEntrada:prob, oddsActual:prob,
     stake:CFG.stake, shares, potencial:shares, ganancia:parseFloat((shares-CFG.stake).toFixed(2)),
-    pnl:0, fuerza:"🔁 COPY", estado:"abierto", abiertaEn:new Date().toISOString(),
+    pnl:0, fuerza:"🔁 COPY", endMs:endMs||null, estado:"abierto", abiertaEn:new Date().toISOString(),
   };
   marcarOrigen(slug, "COPY");
   posicionesAbiertas.push(trade);
@@ -890,7 +894,7 @@ app.post("/api/signals/:id/ejecutar", async (req, res) => {
     oddsEntrada: s.prob, oddsActual: s.prob,
     stake: parseFloat(stake.toFixed(2)), shares,
     potencial: shares, ganancia: parseFloat((shares - stake).toFixed(2)),
-    pnl: 0, fuerza: "✋ MANUAL", tradersCount: s.tradersCount || 1,
+    pnl: 0, fuerza: "✋ MANUAL", endMs: s.endMs || null, tradersCount: s.tradersCount || 1,
     estado: "abierto", abiertaEn: new Date().toISOString(),
   };
   marcarOrigen(s.slug, "MANUAL");

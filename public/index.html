@@ -449,6 +449,21 @@ const fmtK = n => n >= 1000 ? `${(n/1000).toFixed(0)}k` : n;
 const colorPN = n => parseFloat(n) >= 0 ? "#00D97E" : "#FF4560";
 const signPN  = n => parseFloat(n) >= 0 ? "+" : "";
 
+// Tiempo restante hasta el cierre del mercado, en horas (o días+horas si es largo)
+function tiempoRestante(endMs) {
+  if (!endMs) return null;
+  const ms = endMs - Date.now();
+  if (ms <= 0) return { txt: "cerrando…", color: "#FF4560" };
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  let txt;
+  if (h < 1)        txt = `${m}min`;
+  else if (h < 48)  txt = `${h}h`;
+  else              txt = `${Math.floor(h/24)}d ${h%24}h`;
+  const color = h < 3 ? "#FF4560" : h < 12 ? "#F59E0B" : "#64748B";  // urgencia por color
+  return { txt, color };
+}
+
 function showToast(msg, tipo, ms) {
   const t = document.getElementById("toast");
   t.textContent = msg;
@@ -631,7 +646,9 @@ function renderSenal(s) {
       ${s.volumen   ? `<span style="font-size:11px;color:#64748B">Vol: $${fmtK(s.volumen)}</span>` : ""}
       ${s.liquidez  ? `<span style="font-size:11px;color:#64748B">Liq: $${fmtK(s.liquidez)}</span>` : ""}
       ${s.tradersCount ? `<span style="font-size:11px;color:#9D5CF6">👥 ${s.tradersCount} traders</span>` : ""}
-      <span style="font-size:11px;color:#64748B">${s.diasRestantes}d restantes</span>
+      ${(() => { const tr = tiempoRestante(s.endMs); return tr
+        ? `<span style="font-size:11px;color:${tr.color};font-weight:700">⏳ cierra en ${tr.txt}</span>`
+        : `<span style="font-size:11px;color:#64748B">${s.diasRestantes}d restantes</span>`; })()}
     <div style="display:flex;gap:8px">
       <button class="btn-purple" style="flex:1" onclick="ejecutarSenal(${s.id},this)" data-titulo="${esc(s.titulo)}">COMPRAR $${window._stakeActual || s.stake}</button>
       <button class="btn-gray" style="flex:1" onclick="saltarSenal(${s.id})">SALTAR</button>
@@ -690,11 +707,14 @@ function renderPosicion(t) {
   const pnl = t.pnl || 0;
   const entrada = Math.round((t.oddsEntrada || 0) * 100);
   const actual  = Math.round((t.oddsActual  || 0) * 100);
+  const tr = tiempoRestante(t.endMs);
+  const trChip = tr ? `<span style="font-size:10px;color:${tr.color};font-weight:700;white-space:nowrap">⏳ ${tr.txt}</span>` : "";
   return `
   <div style="padding:10px 0;border-bottom:1px solid #1E2030">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
       <div>
         <span class="cat-badge" style="background:${cc}22;color:${cc};font-size:9px">${t.categoria}</span>
+        ${trChip}
         <div style="font-size:13px;font-weight:600;margin-top:4px">${esc(t.titulo)}</div>
         <div style="font-size:11px;color:#64748B;margin-top:2px">${entrada}% → <span style="color:${actual>=entrada?"#00D97E":"#FF4560"}">${actual}%</span> · Stake: $${fmt(t.stake)}</div>
       </div>
