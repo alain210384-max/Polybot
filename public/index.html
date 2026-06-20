@@ -521,6 +521,25 @@ function updateUI() {
   if (document.getElementById("kellyValM"))
     document.getElementById("kellyValM").textContent = `$${fmt(kelly)}`;
 
+  // Sync sliders with saved server config
+  if (estado.stake != null) {
+    ["stakeSlider","stakeSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = estado.stake; });
+    ["stakeVal","stakeValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${estado.stake}`; });
+  }
+  if (estado.minOdds != null) {
+    const v = Math.round(estado.minOdds * 100);
+    ["oddsSlider","oddsSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = v; });
+    ["oddsVal","oddsValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${v}%`; });
+  }
+  if (estado.maxHoldHoras != null) {
+    ["holdSlider","holdSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = estado.maxHoldHoras; });
+    ["holdVal","holdValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${estado.maxHoldHoras}h`; });
+  }
+  if (estado.maxDiasRestantes != null) {
+    ["diasSlider","diasSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = estado.maxDiasRestantes; });
+    ["diasVal","diasValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `≤${estado.maxDiasRestantes}d`; });
+  }
+
   // Bot toggle
   const toggles = [["botToggle","botKnob"],["botToggleMobile","botKnobMobile"]];
   toggles.forEach(([tid, kid]) => {

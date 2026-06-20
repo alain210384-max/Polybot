@@ -13,18 +13,31 @@ app.use(express.static(path.join(__dirname, "public")));
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
 // ── CONFIG ─────────────────────────────────────────────────────────────────────
-let CFG = {
-  minOdds:      0.70,
-  maxOdds:      0.85,
-  minLiquidity: 300,
-  budget:       parseFloat(process.env.DAILY_BUDGET)    || 59,
-  stake:        parseFloat(process.env.STAKE_PER_TRADE) || 3,
-  keyId:        process.env.POLYMARKET_KEY_ID,
-  secretKey:    process.env.POLYMARKET_SECRET_KEY,
-  autoComprar:  true,  // Sistema 1: screener auto-buy
-  autoCopiar:   true,  // Sistema 2: copy trader
-  maxHoldHoras: 24,    // Cerrar posiciones automáticamente tras N horas
-  maxDiasRestantes: 7, // Screener: solo mercados que resuelven en ≤7 días
+const CFG_FILE = path.join(__dirname, "cfg.json");
+const CFG_DEFAULTS = {
+  minOdds:          0.70,
+  maxOdds:          0.85,
+  minLiquidity:     300,
+  budget:           parseFloat(process.env.DAILY_BUDGET)    || 59,
+  stake:            parseFloat(process.env.STAKE_PER_TRADE) || 3,
+  keyId:            process.env.POLYMARKET_KEY_ID,
+  secretKey:        process.env.POLYMARKET_SECRET_KEY,
+  autoComprar:      true,
+  autoCopiar:       true,
+  maxHoldHoras:     24,
+  maxDiasRestantes: 7,
+};
+let CFG = (() => {
+  try {
+    const saved = JSON.parse(fs.readFileSync(CFG_FILE, "utf8"));
+    // Credenciales siempre de env vars, nunca del archivo
+    return { ...CFG_DEFAULTS, ...saved, keyId: CFG_DEFAULTS.keyId, secretKey: CFG_DEFAULTS.secretKey };
+  } catch(_) {}
+  return { ...CFG_DEFAULTS };
+})();
+const guardarCFG = () => {
+  const { keyId, secretKey, ...sinCredenciales } = CFG;
+  try { fs.writeFileSync(CFG_FILE, JSON.stringify(sinCredenciales, null, 2)); } catch(_) {}
 };
 
 const GAMMA_API = "https://gamma-api.polymarket.com";
@@ -866,6 +879,7 @@ app.post("/api/config", (req, res) => {
   if (autoCopiar        !==undefined) CFG.autoCopiar       =!!autoCopiar;
   if (req.body.maxHoldHoras     !==undefined) CFG.maxHoldHoras     =parseInt(req.body.maxHoldHoras);
   if (req.body.maxDiasRestantes !==undefined) CFG.maxDiasRestantes =parseInt(req.body.maxDiasRestantes);
+  guardarCFG();
   res.json({ success:true });
 });
 
