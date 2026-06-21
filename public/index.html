@@ -231,10 +231,17 @@
       <!-- Min Odds -->
       <div style="margin-bottom:20px">
         <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-          <span style="font-size:12px;color:#64748B">Mínimo de Odds</span>
-          <span id="oddsVal" style="font-size:13px;font-weight:700;color:#9D5CF6" class="mono">70%</span>
+          <span style="font-size:12px;color:#64748B">Rango de Odds</span>
+          <span id="oddsVal" style="font-size:13px;font-weight:700;color:#9D5CF6" class="mono">70%–85%</span>
         </div>
-        <input type="range" min="60" max="90" value="70" id="oddsSlider" oninput="updateOdds(this.value)">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#64748B;margin-bottom:2px">
+          <span>Mínimo</span><span id="oddsMinDisplay">70%</span>
+        </div>
+        <input type="range" min="55" max="95" value="70" id="oddsSlider" oninput="updateMinOdds(this.value)">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#64748B;margin:6px 0 2px">
+          <span>Máximo</span><span id="oddsMaxDisplay">85%</span>
+        </div>
+        <input type="range" min="60" max="98" value="85" id="oddsMaxSlider" oninput="updateMaxOdds(this.value)">
       </div>
 
       <!-- Cierre automático -->
@@ -406,10 +413,17 @@
 
     <div style="margin-bottom:20px">
       <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-        <span style="font-size:13px">Mínimo de Odds</span>
-        <span id="oddsValM" class="mono" style="font-weight:700;color:#9D5CF6">70%</span>
+        <span style="font-size:13px">Rango de Odds</span>
+        <span id="oddsValM" class="mono" style="font-weight:700;color:#9D5CF6">70%–85%</span>
       </div>
-      <input type="range" min="60" max="90" value="70" oninput="updateOdds(this.value)">
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:#64748B;margin-bottom:2px">
+        <span>Mínimo</span><span id="oddsMinDisplayM">70%</span>
+      </div>
+      <input type="range" min="55" max="95" value="70" id="oddsSliderM" oninput="updateMinOdds(this.value)">
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:#64748B;margin:6px 0 2px">
+        <span>Máximo</span><span id="oddsMaxDisplayM">85%</span>
+      </div>
+      <input type="range" min="60" max="98" value="85" id="oddsMaxSliderM" oninput="updateMaxOdds(this.value)">
     </div>
 
     <div class="card-dark" style="text-align:center">
@@ -581,10 +595,14 @@ function updateUI() {
     // Actualizar stake global para que los botones de señales muestren el valor correcto
     if (window._stakeActual !== estado.stake) { window._stakeActual = estado.stake; fetchSenales(); }
   }
-  if (estado.minOdds != null) {
-    const v = Math.round(estado.minOdds * 100);
-    ["oddsSlider","oddsSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = v; });
-    ["oddsVal","oddsValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${v}%`; });
+  if (estado.minOdds != null || estado.maxOdds != null) {
+    const minV = Math.round((estado.minOdds || 0.70) * 100);
+    const maxV = Math.round((estado.maxOdds || 0.85) * 100);
+    ["oddsSlider","oddsSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = minV; });
+    ["oddsMaxSlider","oddsMaxSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = maxV; });
+    ["oddsMinDisplay","oddsMinDisplayM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${minV}%`; });
+    ["oddsMaxDisplay","oddsMaxDisplayM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${maxV}%`; });
+    ["oddsVal","oddsValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${minV}%–${maxV}%`; });
   }
   if (estado.maxHoldHoras != null) {
     ["holdSlider","holdSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = estado.maxHoldHoras; });
@@ -1003,11 +1021,22 @@ function updateHold(val) {
 }
 
 
-function updateOdds(val) {
-  document.getElementById("oddsVal").textContent = `${val}%`;
-  if (document.getElementById("oddsValM"))
-    document.getElementById("oddsValM").textContent = `${val}%`;
+function updateMinOdds(val) {
+  val = parseInt(val);
+  const maxVal = parseInt(document.getElementById("oddsMaxSlider")?.value || document.getElementById("oddsMaxSliderM")?.value || 85);
+  if (val >= maxVal) { val = maxVal - 5; ["oddsSlider","oddsSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = val; }); }
+  ["oddsMinDisplay","oddsMinDisplayM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${val}%`; });
+  ["oddsVal","oddsValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${val}%–${maxVal}%`; });
   fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ minOdds: val/100 }) });
+}
+
+function updateMaxOdds(val) {
+  val = parseInt(val);
+  const minVal = parseInt(document.getElementById("oddsSlider")?.value || document.getElementById("oddsSliderM")?.value || 70);
+  if (val <= minVal) { val = minVal + 5; ["oddsMaxSlider","oddsMaxSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = val; }); }
+  ["oddsMaxDisplay","oddsMaxDisplayM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${val}%`; });
+  ["oddsVal","oddsValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${minVal}%–${val}%`; });
+  fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ maxOdds: val/100 }) });
 }
 
 // ── CATEGORÍAS ────────────────────────────────────────────────────────────────
