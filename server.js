@@ -336,9 +336,7 @@ const mapCategoria = (tags=[], question="", slug="") => {
   return "WILDCARD";
 };
 
-const DEPORTIVOS = ["BEISBOL","NBA","NFL","NHL","SOCCER","UFC","SPORTS","TENIS","GOLF","F1"];
-const esDeporteEnVivo  = (cat, prob, dias) => DEPORTIVOS.includes(cat) && dias <= 2 && prob >= 0.55;
-const esIndiceIntraday = (cat, dias)       => ["SPX","NQ","DOW","VIX"].includes(cat) && dias <= 1;
+const esIndiceIntraday = (cat, dias) => ["SPX","NQ","DOW","VIX"].includes(cat) && dias <= 1;
 
 // ── SISTEMA 1: SCREENER — escanea todos los mercados de polymarket.us ──────────
 const fetchMercadosReales = async () => {
@@ -636,25 +634,6 @@ const ejecutarCopyTrade = async (act, wallet) => {
   presupuestoUsado = parseFloat((presupuestoUsado+CFG.stake).toFixed(2));
   tradesHoy++;
   console.log(`📋 COPY #${tradesHoy}: ${trade.titulo.slice(0,50)}`);
-};
-
-const cerrarCopyTrade = async (act, wallet) => {
-  const slug = act.market?.slug || act.slug;
-  if (!slug) return;
-  const idx = posicionesAbiertas.findIndex(p => p.slug===slug && (p.titulo||"").includes(`COPY ${wallet.slice(0,6)}`));
-  if (idx===-1) return;
-  const pos = posicionesAbiertas[idx];
-  if (modoReal) { try { await pmCerrar(slug); } catch(e) { console.log(`⚠️ COPY close:${e.message}`); } }
-  const probSalida = parseFloat(act.price||act.avgPrice||pos.oddsActual||pos.oddsEntrada);
-  const pnl = parseFloat(((probSalida-pos.oddsEntrada)*pos.shares).toFixed(2));
-  pos.estado="cerrado_copy"; pos.pnl=pnl; pos.oddsActual=probSalida;
-  pnlHoy=parseFloat((pnlHoy+pnl).toFixed(2)); balanceReal=parseFloat((balanceReal+pnl).toFixed(2));
-  if(pnl>=0) { ganados++; rachaPerder=0; }
-  else       { perdidos++; rachaPerder++; ultimaPerdidaMs=Date.now(); if(rachaPerder>=8) { circuitBreaker=true; console.log("🚨 Circuit breaker activado"); } }
-  presupuestoUsado=parseFloat(Math.max(0,presupuestoUsado-pos.stake).toFixed(2));
-  historialTrades.unshift({...pos, cerradaEn:new Date().toISOString()});
-  posicionesAbiertas.splice(idx,1);
-  console.log(`📋 COPY cerrado PnL $${pnl} | racha: ${rachaPerder}`);
 };
 
 const copiarTrades = async () => {
