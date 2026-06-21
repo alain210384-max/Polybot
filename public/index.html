@@ -179,9 +179,12 @@
       <!-- Circuit Breaker Alert -->
       <div id="circuitAlert" style="display:none;background:#FF456022;border:1px solid #FF4560;border-radius:10px;padding:12px;margin-bottom:16px;text-align:center">
         <div style="font-size:12px;font-weight:700;color:#FF4560">🚨 CIRCUIT BREAKER</div>
-        <div style="font-size:11px;color:#64748B;margin:4px 0">5 pérdidas seguidas</div>
-        <button class="btn-red" onclick="resetCircuit()" style="margin-top:8px;width:100%">Reiniciar</button>
+        <div style="font-size:11px;color:#94A3B8;margin:4px 0" id="circuitRachaText">8 pérdidas seguidas — compras pausadas</div>
+        <div style="font-size:10px;color:#64748B;margin-bottom:4px" id="circuitAutoReset"></div>
+        <button class="btn-red" onclick="resetCircuit()" style="margin-top:6px;width:100%">✅ Reiniciar y continuar</button>
       </div>
+      <!-- Racha de pérdidas (visible aunque no haya circuit breaker) -->
+      <div id="rachaAlerta" style="display:none;background:#F59E0B15;border:1px solid #F59E0B44;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:11px;color:#F59E0B;text-align:center"></div>
 
       <!-- Presupuesto -->
       <div style="margin-bottom:20px">
@@ -276,8 +279,8 @@
         </div>
         <!-- Circuit breaker: aviso inline en señales -->
         <div id="circuitAlertSenales" style="display:none;background:#FF456015;border:1px solid #FF4560;border-radius:8px;padding:10px 12px;margin-bottom:10px;align-items:center;justify-content:space-between;gap:8px">
-          <span style="font-size:12px;color:#FF4560;font-weight:700">🚨 Circuit breaker activo (5 pérdidas seguidas). Las compras automáticas están pausadas.</span>
-          <button onclick="resetCircuit()" style="background:#FF456033;border:1px solid #FF4560;border-radius:6px;color:#FF4560;font-size:11px;font-weight:700;padding:4px 10px;cursor:pointer;white-space:nowrap">Reiniciar</button>
+          <span style="font-size:12px;color:#FF4560;font-weight:700" id="circuitSenalesText">🚨 Circuit breaker activo (8 pérdidas seguidas). Las compras automáticas están pausadas.</span>
+          <button onclick="resetCircuit()" style="background:#FF456033;border:1px solid #FF4560;border-radius:6px;color:#FF4560;font-size:11px;font-weight:700;padding:4px 10px;cursor:pointer;white-space:nowrap">✅ Reiniciar</button>
         </div>
         <div id="senalesList" style="max-height:380px;overflow-y:auto"></div>
       </div>
@@ -629,6 +632,27 @@ function updateUI() {
   document.getElementById("circuitAlert").style.display = estado.circuitBreaker ? "block" : "none";
   const cb2 = document.getElementById("circuitAlertSenales");
   if (cb2) cb2.style.display = estado.circuitBreaker ? "flex" : "none";
+  // Texto dinámico en el banner
+  const rachaEl = document.getElementById("circuitRachaText");
+  if (rachaEl) rachaEl.textContent = `${estado.rachaPerder || 8} pérdidas seguidas — compras pausadas`;
+  const autoResetEl = document.getElementById("circuitAutoReset");
+  if (autoResetEl && estado.autoResetEn) {
+    const minLeft = Math.max(0, Math.ceil((estado.autoResetEn - Date.now()) / 60000));
+    autoResetEl.textContent = minLeft > 0 ? `⏱ Auto-reinicio en ${minLeft} min` : "⏱ Auto-reiniciando…";
+  } else if (autoResetEl) { autoResetEl.textContent = ""; }
+  // Racha de advertencia (sin circuit breaker aún)
+  const rachaAlert = document.getElementById("rachaAlerta");
+  if (rachaAlert) {
+    const r = estado.rachaPerder || 0;
+    if (!estado.circuitBreaker && r >= 3) {
+      rachaAlert.style.display = "block";
+      rachaAlert.textContent = `⚠️ ${r} pérdidas seguidas (circuit breaker se activa a las 8)`;
+    } else { rachaAlert.style.display = "none"; }
+  }
+  const senalesText = document.getElementById("circuitSenalesText");
+  if (senalesText && estado.rachaPerder) {
+    senalesText.textContent = `🚨 Circuit breaker activo (${estado.rachaPerder} pérdidas seguidas). Las compras automáticas están pausadas.`;
+  }
 
   // ROI y ganancia — base = primer balance REAL visto (no el presupuesto fijo)
   const base = estado.balanceBase || estado.presupuestoTotal || balanceInicial;

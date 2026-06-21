@@ -63,6 +63,12 @@ const fuerzaPorOrigen = slug =>
 const diaCalendario = ms => Math.floor((ms + (CFG.tzOffsetHoras ?? -7) * 3600000) / 86400000);
 // 0 = cierra HOY, 1 = cierra MAÑANA, 2+ más adelante (99 si no hay fecha)
 const diaCierreDeMs = endMs => endMs ? (diaCalendario(endMs) - diaCalendario(Date.now())) : 99;
+// Extrae fecha de cierre del nombre del slug (ej: "fifa-wc-2026-06-27-...") como fallback
+const fechaDeSlug = slug => {
+  const m = slug?.match(/(\d{4}-\d{2}-\d{2})/);
+  if (!m) return null;
+  return new Date(`${m[1]}T23:59:00-07:00`).getTime();
+};
 
 const GAMMA_API = "https://gamma-api.polymarket.com";
 const DATA_API  = "https://data-api.polymarket.com";
@@ -167,6 +173,7 @@ let ganados            = 0;
 let perdidos           = 0;
 let presupuestoUsado   = 0;
 let rachaPerder        = 0;
+let ultimaPerdidaMs    = 0;   // timestamp de la última pérdida (para auto-reset)
 let circuitBreaker     = false;
 let senalesPendientes  = [];
 let posicionesAbiertas = [];
@@ -278,6 +285,7 @@ const sincronizarPosiciones = async () => {
       // Fecha de cierre: del metadata si viene; si no, se consulta al mercado (solo 1 vez por posición nueva)
       let endMs = (meta.endDate || meta.end_date_iso) ? new Date(meta.endDate || meta.end_date_iso).getTime() : null;
       if (!endMs) { try { endMs = await getMarketEndMs(slug, null); } catch(_) {} }
+      if (!endMs) endMs = fechaDeSlug(slug);   // último recurso: fecha en el nombre del slug
       posicionesAbiertas.push({
         id:          Date.now() + Math.random(),
         marketId:    slug,
@@ -642,7 +650,7 @@ const cerrarCopyTrade = async (act, wallet) => {
   pos.estado="cerrado_copy"; pos.pnl=pnl; pos.oddsActual=probSalida;
   pnlHoy=parseFloat((pnlHoy+pnl).toFixed(2)); balanceReal=parseFloat((balanceReal+pnl).toFixed(2));
   if(pnl>=0) { ganados++; rachaPerder=0; }
-  else       { perdidos++; rachaPerder++; if(rachaPerder>=5) { circuitBreaker=true; console.log("🚨 Circuit breaker activado"); } }
+  else       { perdidos++; rachaPerder++; ultimaPerdidaMs=Date.now(); if(rachaPerder>=8) { circuitBreaker=true; console.log("🚨 Circuit breaker activado"); } }
   presupuestoUsado=parseFloat(Math.max(0,presupuestoUsado-pos.stake).toFixed(2));
   historialTrades.unshift({...pos, cerradaEn:new Date().toISOString()});
   posicionesAbiertas.splice(idx,1);
@@ -672,7 +680,8 @@ const copiarTrades = async () => {
       const lado = (act.side||act.type||"").toUpperCase();
       console.log(`🆕 ${wallet.slice(0,8)} ${lado||"?"}: ${act.market?.question?.slice(0,38)||id}`);
       if (lado==="BUY"||act.outcome==="YES") await ejecutarCopyTrade(act, wallet);
-      else if (lado==="SELL")               await cerrarCopyTrade(act, wallet);
+      // No mirramos las ventas del trader — dejamos que cada mercado resuelva por sí solo.
+      // Cerrar early a precio de mercado (bid) siempre tiene spread negativo; es mejor esperar la resolución.
     }
   }
 };
@@ -726,7 +735,7 @@ const cerrarPosicionesAntiguas = async () => {
     pnlHoy    = parseFloat((pnlHoy + pnl).toFixed(2));
     balanceReal = parseFloat((balanceReal + pnl).toFixed(2));
     if (pnl >= 0) { ganados++; rachaPerder = 0; }
-    else          { perdidos++; rachaPerder++; if (rachaPerder >= 5) circuitBreaker = true; }
+    else          { perdidos++; rachaPerder++; ultimaPerdidaMs = Date.now(); if (rachaPerder >= 8) circuitBreaker = true; }
     presupuestoUsado = parseFloat(Math.max(0, presupuestoUsado - pos.stake).toFixed(2));
     historialTrades.unshift({ ...pos, cerradaEn: new Date().toISOString() });
     const idx = posicionesAbiertas.findIndex(p => p.id === pos.id);
@@ -737,9 +746,18 @@ const cerrarPosicionesAntiguas = async () => {
 };
 setInterval(cerrarPosicionesAntiguas, 30*60*1000); // cierre automático cada 30 min
 
+// Auto-reset circuit breaker si no llega ninguna pérdida nueva en 3 horas
+setInterval(() => {
+  if (rachaPerder > 0 && ultimaPerdidaMs > 0 && (Date.now() - ultimaPerdidaMs) > 3 * 3600 * 1000) {
+    const prev = rachaPerder;
+    rachaPerder = 0; circuitBreaker = false; ultimaPerdidaMs = 0;
+    console.log(`⏰ Circuit breaker auto-reseteado (${prev} pérdidas, 3h sin nuevas)`);
+  }
+}, 30 * 60 * 1000);
+
 cron.schedule("0 0 * * *", () => {
   pnlHoy=0; tradesHoy=0; ganados=0; perdidos=0;
-  presupuestoUsado=0; rachaPerder=0; circuitBreaker=false;
+  presupuestoUsado=0; rachaPerder=0; circuitBreaker=false; ultimaPerdidaMs=0;
   const valorDia = balanceTotalReal ?? balanceReal;
   historialBalance.push({ dia:new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit"}), valor:valorDia });
   guardarHistorialBalance();
@@ -753,7 +771,9 @@ app.get("/api/status", (req, res) => {
   // si aún no están listas, caemos a los contadores en memoria.
   const usarReal = modoReal && statsReales.listo;
   res.json({
-    botActivo, circuitBreaker, balance:balanceMostrado,
+    botActivo, circuitBreaker, rachaPerder,
+    autoResetEn: (ultimaPerdidaMs > 0 && rachaPerder > 0) ? ultimaPerdidaMs + 3 * 3600 * 1000 : null,
+    balance:balanceMostrado,
     balanceCash, balanceEnPos, balanceTotalReal, balanceBase:balanceBaseReal,
     pnlHoy:    usarReal ? statsReales.pnlHoy    : parseFloat(pnlHoy.toFixed(2)),
     tradesHoy: usarReal ? statsReales.trades    : tradesHoy,
@@ -937,7 +957,7 @@ app.post("/api/trades/:id/cerrar", async (req, res) => {
   trade.estado="cerrado_manual"; trade.pnl=pnl;
   pnlHoy=parseFloat((pnlHoy+pnl).toFixed(2)); balanceReal=parseFloat((balanceReal+pnl).toFixed(2));
   if(pnl>=0) { ganados++; rachaPerder=0; }
-  else       { perdidos++; rachaPerder++; if(rachaPerder>=5) { circuitBreaker=true; console.log("🚨 Circuit breaker activado"); } }
+  else       { perdidos++; rachaPerder++; ultimaPerdidaMs=Date.now(); if(rachaPerder>=8) { circuitBreaker=true; console.log("🚨 Circuit breaker activado"); } }
   historialTrades.unshift({...trade, cerradaEn:new Date().toISOString()});
   posicionesAbiertas.splice(idx,1);
   if (modoReal) setTimeout(actualizarBalanceReal, 2000);
@@ -1076,7 +1096,7 @@ app.post("/api/mis-posiciones/cerrar", async (req, res) => {
 
 app.post("/api/bot/pausar",        (req, res) => { botActivo=false; res.json({ botActivo }); });
 app.post("/api/bot/reanudar",      (req, res) => { botActivo=true;  res.json({ botActivo }); });
-app.post("/api/bot/reset-circuit", (req, res) => { circuitBreaker=false; rachaPerder=0; res.json({ success:true }); });
+app.post("/api/bot/reset-circuit", (req, res) => { circuitBreaker=false; rachaPerder=0; ultimaPerdidaMs=0; res.json({ success:true }); });
 app.post("/api/bot/scan-ahora",    async (req,res) => { const m=await fetchMercadosReales(); await autoComprarSenales(); res.json({ mercados:m.length }); });
 
 app.post("/api/traders/:w/toggle", (req, res) => {
