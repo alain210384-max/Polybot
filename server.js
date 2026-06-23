@@ -391,7 +391,7 @@ const fetchMercadosReales = async () => {
       const intraday = esIndiceIntraday(categoria, diaCierre);
 
       if (enVivo) {
-        if (prob < 0.55) continue;
+        if (prob < 0.55 || prob > CFG.maxOdds) continue;  // respeta techo de odds también
         console.log(`⚡ EN VIVO: ${m.question?.slice(0,55)} | ${(prob*100).toFixed(0)}%`);
       } else if (intraday) {
         // Índices intradía: umbral de odds más bajo (0.60) porque resuelven el mismo día
@@ -601,7 +601,7 @@ const ejecutarCopyTrade = async (act, wallet) => {
   const slug  = act.market?.slug || act.slug;
   const title = act.market?.question || act.title || slug || "Copy Trade";
   const prob  = parseFloat(act.price || act.avgPrice || 0.75);
-  if (!prob || prob < 0.50 || prob > 0.98 || !slug) return;
+  if (!prob || prob < CFG.minOdds || prob > CFG.maxOdds || !slug) return;  // respeta rango configurado
   if (posicionesAbiertas.find(p => p.slug === slug)) return; // Evitar doble compra del mismo mercado
 
   // Solo copiar si el mercado cierra HOY o MAÑANA (igual que el screener)
