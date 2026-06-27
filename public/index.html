@@ -691,12 +691,25 @@ async function fetchSenales() {
   try {
     const r = await fetch(`${API}/signals/pending`);
     const senales = await r.json();
-    document.getElementById("badgeSenales").textContent = `${senales.length} LISTAS`;
+    const nScr = senales.filter(s => String(s.fuerza||"").includes("SCREENER")).length;
+    const nCon = senales.length - nScr;
+    document.getElementById("badgeSenales").textContent = `📈 ${nScr}  ·  🐋 ${nCon}`;
     const html = senales.length === 0
       ? `<div style="text-align:center;color:#64748B;padding:50px;font-size:14px">🔍 Escaneando mercados...</div>`
       : senales.map(s => renderSenal(s)).join("");
     document.getElementById("senalesList").innerHTML = html;
   } catch(e) {}
+}
+
+// Badge de ORIGEN del trade (qué sistema lo generó)
+function fuenteChip(fuerza, tradersCount) {
+  const f = String(fuerza || "");
+  let txt, col;
+  if (f.includes("SCREENER"))                          { txt = "📈 SCREENER"; col = "#3B82F6"; }
+  else if (f.includes("CONSENSO") || tradersCount > 0) { txt = "🐋 CONSENSO"; col = "#9D5CF6"; }
+  else if (f.includes("MANUAL"))                       { txt = "✋ MANUAL";   col = "#F59E0B"; }
+  else                                                  { txt = "🔗 SYNC";     col = "#64748B"; }
+  return `<span class="cat-badge" style="background:${col}22;color:${col};margin-right:4px">${txt}</span>`;
 }
 
 function renderSenal(s) {
@@ -714,8 +727,9 @@ function renderSenal(s) {
   <div class="card-dark slide-in" style="margin-bottom:10px;border:1px solid ${s.fuerza==="FUERTE"?"#7C3AED44":"#1E2030"}">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
       <div style="flex:1;margin-right:10px">
+        ${fuenteChip(s.fuerza, s.tradersCount)}
         <span class="cat-badge" style="background:${cc}22;color:${cc}">${s.categoria}</span>
-        <span class="strength-badge" style="background:${fColor}22;color:${fColor};margin-left:6px">${enVivo ? "🔴 EN VIVO" : fuerza}</span>
+        ${String(s.fuerza||"").includes("SCREENER") ? "" : `<span class="strength-badge" style="background:${fColor}22;color:${fColor};margin-left:6px">${enVivo ? "🔴 EN VIVO" : fuerza}</span>`}
         <div style="font-size:14px;font-weight:600;color:#E2E8F0;margin-top:6px;line-height:1.3">${esc(s.titulo)}</div>
       </div>
       <div style="text-align:right;flex-shrink:0">
@@ -793,6 +807,7 @@ function renderPosicion(t) {
   <div style="padding:10px 0;border-bottom:1px solid #1E2030">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
       <div>
+        ${fuenteChip(t.fuerza, t.tradersCount)}
         <span class="cat-badge" style="background:${cc}22;color:${cc};font-size:9px">${t.categoria}</span>
         ${trChip}
         <div style="font-size:13px;font-weight:600;margin-top:4px">${esc(t.titulo)}</div>
