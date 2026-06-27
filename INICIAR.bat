@@ -11,8 +11,8 @@ echo  Instalando dependencias...
 call npm install --silent
 echo.
 echo  ✅ Iniciando bot...
-echo  📊 Dashboard: http://localhost:3001
+echo  📊 Dashboard: http://localhost:3002
 echo.
-start "" "http://localhost:3001"
+start "" /min cmd /c "timeout /t 4 >nul & start http://localhost:3002"
 node server.js
 pause
