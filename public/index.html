@@ -49,8 +49,8 @@
 
   /* MOBILE */
   .mobile-nav { display: none; }
-  .desktop-grid { display: grid; grid-template-columns: 260px 1fr 280px; gap: 16px; padding: 16px; }
-  .desktop-grid > div { min-width: 0; }   /* evita que el texto largo desborde y corte los % de la derecha */
+  .desktop-grid { display: grid; grid-template-columns: 260px minmax(0, 1fr) 280px; gap: 16px; padding: 16px; }
+  .desktop-grid > div { min-width: 0; }   /* permite que la columna central se encoja (no desborde) */
   .card { overflow: hidden; }             /* contiene el contenido dentro de la tarjeta */
   @media (max-width: 768px) {
     .desktop-grid { display: block; padding: 10px; padding-bottom: 75px; }
