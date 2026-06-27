@@ -37,6 +37,8 @@ const CFG_DEFAULTS = {
   topTradersCount:  50,     // cuántos líderes del día se monitorean (pool ancho = hay overlap real)
   autoConsensus:    true,   // detectar consenso en bucle
   autoScreener:     true,   // Screener nativo .us de favoritos que cierran hoy/mañana
+  stakeConsenso:    5,      // $ por trade de CONSENSO (el screener usa CFG.stake)
+  reservaConsensoPct: 0.20, // % del balance reservado solo para consenso (screener no lo toca)
 };
 let CFG = (() => {
   try {
@@ -61,6 +63,7 @@ const marcarOrigen = (slug, origen) => {
   if (!slug || origenPorSlug[slug]) return;          // no sobrescribir el primer origen
   origenPorSlug[slug] = origen;
   try { fs.writeFileSync(ORIGEN_FILE, JSON.stringify(origenPorSlug)); } catch(_) {}
+  guardarBin();  // persistir en JSONBin (origen-trades.json no sobrevive redeploys de Render)
 };
 const fuerzaPorOrigen = slug =>
   origenPorSlug[slug] === "CONSENSO" ? "🐋 CONSENSO"
@@ -223,10 +226,15 @@ const cargarHistorialBalance = async () => {
         { headers: { "X-Master-Key": JSONBIN_KEY }, timeout: 8000 });
       const data = r.data?.record?.historial;
       const cfgGuardado = r.data?.record?.config;
+      const origGuardado = r.data?.record?.origenes;
       if (cfgGuardado && typeof cfgGuardado === "object") {
         const { keyId, secretKey, ...rest } = cfgGuardado;
         CFG = { ...CFG, ...rest, keyId: CFG.keyId, secretKey: CFG.secretKey };
         console.log(`☁️  Config restaurada de JSONBin (stake $${CFG.stake}, budget $${CFG.budget})`);
+      }
+      if (origGuardado && typeof origGuardado === "object") {
+        origenPorSlug = { ...origGuardado, ...origenPorSlug };  // origen de cada trade sobrevive redeploys
+        console.log(`☁️  Orígenes restaurados de JSONBin (${Object.keys(origGuardado).length})`);
       }
       if (Array.isArray(data) && data.length) {
         console.log(`☁️  Historial cargado de JSONBin (${data.length} días)`);
@@ -252,7 +260,7 @@ const guardarBin = async () => {
   const { keyId, secretKey, ...config } = CFG;   // nunca persistir credenciales
   try {
     await axios.put(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN}`,
-      { historial: historialBalance.slice(-90), config },
+      { historial: historialBalance.slice(-90), config, origenes: origenPorSlug },
       { headers: { "X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json" }, timeout: 8000 });
   } catch(e) { console.log("⚠️ JSONBin save:", e.message); }
 };
@@ -376,6 +384,9 @@ const getMarketEndMs = async (slug, act) => {
 const presupuestoEfectivo = () => (CFG.reinvertir && balanceTotalReal !== null) ? balanceTotalReal : CFG.budget;
 const maxPos = () => Math.max(3, Math.floor(presupuestoEfectivo() / CFG.stake));
 const cashDisponible = () => balanceCash !== null ? balanceCash : (presupuestoEfectivo() - presupuestoUsado);
+// Reserva un % del balance SOLO para consenso → el screener no puede tocarlo
+const reservaConsenso = () => (CFG.reservaConsensoPct || 0) * (balanceTotalReal ?? CFG.budget);
+const cashParaScreener = () => Math.max(0, cashDisponible() - reservaConsenso());
 
 // ── EJECUTAR TRADE (auto-compra de consenso + compra manual) ──────────────────────
 const ejecutarTrade = async (mercado, stake, fuerza, saltaBreaker = false) => {
@@ -408,6 +419,8 @@ const ejecutarTrade = async (mercado, stake, fuerza, saltaBreaker = false) => {
     oddsEntrada: prob, oddsActual: prob,
     stake: parseFloat(stake.toFixed(2)), shares, potencial: shares, ganancia,
     pnl: 0, fuerza, endMs: mercado.endMs || null, tradersCount: mercado.tradersCount || 1,
+    condKey: mercado.condKey || null,            // clave .com (conditionId|outcome) para seguir a los traders
+    traders: mercado.traders || null,            // wallets que sostenían el consenso al comprar
     estado: "abierto", abiertaEn: new Date().toISOString(),
   };
   marcarOrigen(mercado.slug, fuerza.includes("MANUAL") ? "MANUAL" : fuerza.includes("SCREENER") ? "SCREENER" : "CONSENSO");
@@ -628,7 +641,9 @@ const detectarConsensus = async () => {
       diaCierre,
       diasRestantes: endMs ? Math.max(0, Math.ceil((endMs - Date.now()) / 86400000)) : 30,
       fuerza:    overlap >= 6 ? "MÁXIMA" : overlap >= 5 ? "FUERTE" : "MEDIA",
-      stake:     CFG.stake,
+      stake:     CFG.stakeConsenso,
+      condKey:   key,                 // clave .com para re-chequear si los traders salieron
+      traders:   [...g.traders],      // wallets que sostienen el consenso ahora
     });
   }
   consensos.sort((a,b) => (b.overlap - a.overlap) || (b.prob - a.prob));
@@ -643,9 +658,12 @@ const detectarConsensus = async () => {
   senalesPendientes = [...nuevas, ...senalesPendientes].slice(0, 200);
   console.log(`📡 Consenso: ${consensos.length} mercados ≥${CFG.minOverlap} traders · ${nuevas.length} señales nuevas`);
 
-  // ── AUTO-COMPRA ──
+  // Cerrar posiciones de consenso cuyos traders ya salieron
+  await cerrarConsensoSiSalieron(groups);
+
+  // ── AUTO-COMPRA (stake de consenso = $5, puede usar la reserva 20%) ──
   if (!CFG.autoComprar || !botActivo || circuitBreaker) return;
-  if (cashDisponible() < CFG.stake) { console.log(`💸 Auto-compra sin cash ($${cashDisponible().toFixed(2)} libre)`); return; }
+  if (cashDisponible() < CFG.stakeConsenso) { console.log(`💸 Consenso sin cash ($${cashDisponible().toFixed(2)} libre)`); return; }
 
   // Prioridad: mayor overlap primero, luego mercados que cierran antes
   const candidatos = consensos
@@ -655,7 +673,7 @@ const detectarConsensus = async () => {
   let compradas = 0;
   for (const c of candidatos.slice(0, 8)) {
     if (posicionesAbiertas.length >= maxPos()) break;
-    if (cashDisponible() < CFG.stake) break;
+    if (cashDisponible() < CFG.stakeConsenso) break;
 
     // SEGURIDAD: solo opera si hay gemelo US demostrablemente correcto (equipo exacto + acuerdo de precio)
     let prob = c.prob, slugOperable = c.slug;
@@ -671,12 +689,51 @@ const detectarConsensus = async () => {
       console.log(`⏭️ Fuera de rango odds (${(prob*100).toFixed(0)}%): ${c.titulo.slice(0,40)}`);
       continue;
     }
-    const t = await ejecutarTrade({ ...c, slug: slugOperable, prob }, CFG.stake, "🐋 CONSENSO");
+    const t = await ejecutarTrade({ ...c, slug: slugOperable, prob }, CFG.stakeConsenso, "🐋 CONSENSO");
     senalesPendientes = senalesPendientes.filter(s => s.marketId !== c.marketId);
     if (t) compradas++;
     await sleep(700);
   }
-  if (compradas > 0) console.log(`🐋 Auto-compra: ${compradas} consensos comprados (gemelo US verificado)`);
+  if (compradas > 0) console.log(`🐋 Auto-compra: ${compradas} consensos comprados ($${CFG.stakeConsenso} c/u, gemelo US verificado)`);
+};
+
+// Cierra posiciones de CONSENSO cuyos traders originales ya cerraron las suyas.
+// `groups` = grupos recién calculados (clave conditionId|outcome -> {traders:Set}).
+const cerrarConsensoSiSalieron = async (groups) => {
+  const abiertasConsenso = posicionesAbiertas.filter(p => (p.fuerza||"").includes("CONSENSO") && p.condKey);
+  for (const pos of abiertasConsenso) {
+    const original = Array.isArray(pos.traders) ? pos.traders.length : 0;
+    if (original < 1) continue;
+    // ¿Cuántos de los traders ORIGINALES siguen en el mercado? Usamos el grupo recién escaneado
+    // (cubre a los que siguen en el pool) y consultamos directo a los que ya no aparecen.
+    const g = groups[pos.condKey];
+    let siguen = g ? [...g.traders].filter(w => pos.traders.includes(w)).length : 0;
+    // Confirmar los que no salieron en el grupo (pudieron rotar fuera del leaderboard)
+    if (siguen < original) {
+      const faltan = pos.traders.filter(w => !(g && g.traders.has(w)));
+      const checks = await Promise.all(faltan.slice(0, 8).map(async w => {
+        const ps = await getTraderPositions(w);
+        return ps.some(p => `${p.conditionId||p.condition_id||p.slug||""}|${(p.outcomeIndex ?? p.outcome ?? "").toString()}` === pos.condKey && parseFloat(p.size||0) > 0);
+      }));
+      siguen += checks.filter(Boolean).length;
+    }
+    // Si quedan menos de la MITAD de los traders originales (mín 2 de salida), cerramos
+    const salieron = original - siguen;
+    if (siguen <= Math.floor(original / 2) && salieron >= 2) {
+      console.log(`🚪 CONSENSO salida: ${siguen}/${original} traders siguen en "${(pos.titulo||'').slice(0,38)}" → cerrando`);
+      if (modoReal && pos.slug) { try { await pmCerrar(pos.slug); } catch(e) { console.log(`⚠️ cerrar err: ${e.message}`); } }
+      const px  = pos.slug ? (await pmPrecioActual(pos.slug).catch(()=>null)) : null;
+      const odds = px || pos.oddsActual || pos.oddsEntrada;
+      const pnl  = parseFloat(((pos.shares||0) * odds - pos.stake).toFixed(2));
+      pos.estado = "cerrado_traders"; pos.pnl = pnl;
+      pnlHoy = parseFloat((pnlHoy + pnl).toFixed(2));
+      if (pnl >= 0) { ganados++; rachaPerder = 0; } else { perdidos++; rachaPerder++; ultimaPerdidaMs = Date.now(); }
+      historialTrades.unshift({ ...pos, cerradaEn: new Date().toISOString() });
+      const idx = posicionesAbiertas.findIndex(p => p.id === pos.id);
+      if (idx !== -1) posicionesAbiertas.splice(idx, 1);
+      if (modoReal) setTimeout(actualizarBalanceReal, 2000);
+    }
+  }
 };
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -691,15 +748,15 @@ const procesarScreener = async () => {
     !posicionesAbiertas.find(p => p.marketId === c.marketId || p.slug === c.slug));
   if (nuevas.length) senalesPendientes = [...nuevas, ...senalesPendientes].slice(0, 250);
 
-  // Auto-compra directa
+  // Auto-compra directa — el screener solo usa el cash FUERA de la reserva de consenso (20%)
   if (!CFG.autoComprar || !botActivo || circuitBreaker) return;
-  if (cashDisponible() < CFG.stake) return;
+  if (cashParaScreener() < CFG.stake) { console.log(`💸 Screener sin cash libre (reserva consenso $${reservaConsenso().toFixed(2)})`); return; }
   const candidatos = screenerUS.filter(c => c.slug &&
     !posicionesAbiertas.find(p => p.marketId === c.marketId || p.slug === c.slug));
   let compradas = 0;
   for (const c of candidatos.slice(0, 5)) {   // máx 5 por ciclo (se reparte en el tiempo)
     if (posicionesAbiertas.length >= maxPos()) break;
-    if (cashDisponible() < CFG.stake) break;
+    if (cashParaScreener() < CFG.stake) break;
     const t = await ejecutarTrade(c, CFG.stake, "📈 SCREENER");
     senalesPendientes = senalesPendientes.filter(s => s.marketId !== c.marketId);
     if (t) compradas++;
@@ -842,6 +899,7 @@ app.get("/api/status", (req, res) => {
     autoComprar:CFG.autoComprar, autoConsensus:CFG.autoConsensus, autoScreener:CFG.autoScreener, reinvertir:CFG.reinvertir,
     minOverlap:CFG.minOverlap, topTradersCount:CFG.topTradersCount,
     consensosDetectados:consensosActivos.length, screenerDetectados:screenerUS.length,
+    stakeConsenso:CFG.stakeConsenso, reservaConsensoPct:CFG.reservaConsensoPct, reservaConsenso:parseFloat(reservaConsenso().toFixed(2)), cashScreener:parseFloat(cashParaScreener().toFixed(2)),
     maxPositiones:maxPos(), maxHoldHoras:CFG.maxHoldHoras, maxDiasRestantes:CFG.maxDiasRestantes,
   });
 });
@@ -910,12 +968,13 @@ app.post("/api/signals/:id/ejecutar", async (req, res) => {
   if (posicionesAbiertas.length >= maxPos()) return res.json({ success: false, error: `Máximo de posiciones (${maxPos()}) alcanzado` });
   if (posicionesAbiertas.find(p => p.marketId === s.marketId || p.slug === s.slug)) return res.json({ success: false, error: "Ya tienes esta posición abierta" });
 
-  const stake = CFG.stake;
+  const esScreener = String(s.fuerza||"").includes("SCREENER");
+  const stake = esScreener ? CFG.stake : CFG.stakeConsenso;   // consenso $5, screener $1
   if (cashDisponible() < stake) return res.json({ success: false, error: `Sin fondos ($${cashDisponible().toFixed(2)} < $${stake})` });
 
-  // Buscar gemelo seguro en tu venue (polymarket.us) antes de comprar
+  // Screener = slug nativo .us (compra directa). Consenso = buscar gemelo seguro primero.
   let prob = s.prob, slugOperable = s.slug;
-  if (modoReal) {
+  if (modoReal && !esScreener) {
     const twin = buscarGemeloUS(s);
     if (!twin) return res.json({ success:false, error:"Sin gemelo verificable en polymarket.us (equipo/precio no concuerdan). Cómpralo manual en polymarket.us." });
     slugOperable = twin.slug;
@@ -1094,6 +1153,8 @@ app.post("/api/config", (req, res) => {
   if (autoComprar !==undefined) CFG.autoComprar=!!autoComprar;
   if (req.body.autoConsensus    !==undefined) CFG.autoConsensus    =!!req.body.autoConsensus;
   if (req.body.autoScreener     !==undefined) CFG.autoScreener     =!!req.body.autoScreener;
+  if (req.body.stakeConsenso    !==undefined) CFG.stakeConsenso    =Math.max(1, parseFloat(req.body.stakeConsenso));
+  if (req.body.reservaConsensoPct!==undefined) CFG.reservaConsensoPct=Math.max(0, Math.min(0.8, parseFloat(req.body.reservaConsensoPct)));
   if (req.body.minOverlap       !==undefined) CFG.minOverlap       =Math.max(2, parseInt(req.body.minOverlap));
   if (req.body.topTradersCount  !==undefined) CFG.topTradersCount  =Math.max(5, parseInt(req.body.topTradersCount));
   if (req.body.maxHoldHoras     !==undefined) CFG.maxHoldHoras     =parseInt(req.body.maxHoldHoras);
