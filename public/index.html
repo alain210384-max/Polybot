@@ -50,6 +50,8 @@
   /* MOBILE */
   .mobile-nav { display: none; }
   .desktop-grid { display: grid; grid-template-columns: 260px 1fr 280px; gap: 16px; padding: 16px; }
+  .desktop-grid > div { min-width: 0; }   /* evita que el texto largo desborde y corte los % de la derecha */
+  .card { overflow: hidden; }             /* contiene el contenido dentro de la tarjeta */
   @media (max-width: 768px) {
     .desktop-grid { display: block; padding: 10px; padding-bottom: 75px; }
     .col-left { display: none; }
@@ -884,7 +886,7 @@ async function fetchHistorial() {
       return `
       <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1E2030;font-size:12px">
         <span style="color:#64748B;min-width:38px;font-size:10px">${hora}</span>
-        <span style="flex:1;color:#E2E8F0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.titulo)}</span>
+        <span style="flex:1;min-width:0;color:#E2E8F0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.titulo)}</span>
         <span class="mono" style="color:#F59E0B;flex-shrink:0">${Math.round((t.oddsEntrada||0)*100)}%</span>
         <span class="mono" style="color:#64748B;flex-shrink:0">$${fmt(t.stake)}</span>
         <span class="mono" style="color:${colorPN(t.pnl)};flex-shrink:0;font-weight:700">${signPN(t.pnl)}$${fmt(Math.abs(t.pnl||0))}</span>
