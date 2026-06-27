@@ -137,6 +137,7 @@
   <div class="stat-card" style="flex:1;min-width:110px">
     <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">P&L Hoy</div>
     <div class="mono" id="statPnl" style="font-size:18px;font-weight:800;color:#00D97E">+$0.00</div>
+    <div style="font-size:10px;color:#64748B;margin-top:2px">Total: <span id="statPnlTotal" class="mono">—</span></div>
   </div>
   <div class="stat-card" style="flex:1;min-width:110px">
     <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Win Rate</div>
@@ -178,9 +179,12 @@
       <!-- Circuit Breaker Alert -->
       <div id="circuitAlert" style="display:none;background:#FF456022;border:1px solid #FF4560;border-radius:10px;padding:12px;margin-bottom:16px;text-align:center">
         <div style="font-size:12px;font-weight:700;color:#FF4560">🚨 CIRCUIT BREAKER</div>
-        <div style="font-size:11px;color:#64748B;margin:4px 0">5 pérdidas seguidas</div>
-        <button class="btn-red" onclick="resetCircuit()" style="margin-top:8px;width:100%">Reiniciar</button>
+        <div style="font-size:11px;color:#94A3B8;margin:4px 0" id="circuitRachaText">8 pérdidas seguidas — compras pausadas</div>
+        <div style="font-size:10px;color:#64748B;margin-bottom:4px" id="circuitAutoReset"></div>
+        <button class="btn-red" onclick="resetCircuit()" style="margin-top:6px;width:100%">✅ Reiniciar y continuar</button>
       </div>
+      <!-- Racha de pérdidas (visible aunque no haya circuit breaker) -->
+      <div id="rachaAlerta" style="display:none;background:#F59E0B15;border:1px solid #F59E0B44;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:11px;color:#F59E0B;text-align:center"></div>
 
       <!-- Presupuesto -->
       <div style="margin-bottom:20px">
@@ -196,7 +200,24 @@
           <input id="customPresupuesto" type="number" placeholder="$" style="flex:1;background:#1A1C26;border:1px solid #1E2030;border-radius:8px;padding:8px;color:#E2E8F0;font-size:13px">
           <button class="btn-purple" onclick="setPresupuestoCustom()">OK</button>
         </div>
+        <div style="font-size:10px;color:#64748B;margin-top:6px" id="budgetNota"></div>
       </div>
+
+      <!-- Reinvertir ganancias -->
+      <div style="margin-bottom:14px;padding:12px;background:#0E1420;border:1px solid #1E2030;border-radius:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:#E2E8F0">♻️ Reinvertir ganancias</div>
+            <div style="font-size:10px;color:#64748B;margin-top:2px">Usa todo tu balance (incluidas ganancias) para operar</div>
+          </div>
+          <div id="reinvertirToggle" class="toggle-switch" style="background:#1E2030" onclick="toggleReinvertir()">
+            <div id="reinvertirKnob" class="toggle-knob" style="left:3px"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detener / Activar bot -->
+      <button id="btnStopBot" onclick="toggleBot()" style="width:100%;margin-bottom:20px;padding:12px;border:none;border-radius:10px;font-weight:800;font-size:14px;cursor:pointer;background:#FF456022;color:#FF4560;border:1px solid #FF4560">⏸ DETENER BOT</button>
 
       <!-- Stake por trade -->
       <div style="margin-bottom:20px">
@@ -210,10 +231,33 @@
       <!-- Min Odds -->
       <div style="margin-bottom:20px">
         <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-          <span style="font-size:12px;color:#64748B">Mínimo de Odds</span>
-          <span id="oddsVal" style="font-size:13px;font-weight:700;color:#9D5CF6" class="mono">70%</span>
+          <span style="font-size:12px;color:#64748B">Rango de Odds</span>
+          <span id="oddsVal" style="font-size:13px;font-weight:700;color:#9D5CF6" class="mono">70%–85%</span>
         </div>
-        <input type="range" min="60" max="90" value="70" id="oddsSlider" oninput="updateOdds(this.value)">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#64748B;margin-bottom:2px">
+          <span>Mínimo</span><span id="oddsMinDisplay">70%</span>
+        </div>
+        <input type="range" min="55" max="95" value="70" id="oddsSlider" oninput="updateMinOdds(this.value)">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#64748B;margin:6px 0 2px">
+          <span>Máximo</span><span id="oddsMaxDisplay">85%</span>
+        </div>
+        <input type="range" min="60" max="98" value="85" id="oddsMaxSlider" oninput="updateMaxOdds(this.value)">
+      </div>
+
+      <!-- Cierre automático -->
+      <div style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:12px;color:#64748B">Cerrar posición tras</span>
+          <span id="holdVal" style="font-size:13px;font-weight:700;color:#FF4560" class="mono">24h</span>
+        </div>
+        <input type="range" min="6" max="72" step="6" value="24" id="holdSlider" oninput="updateHold(this.value)">
+        <div style="font-size:10px;color:#64748B;margin-top:4px">⏰ Cierre auto si el mercado no resuelve</div>
+      </div>
+
+      <!-- El bot compra solo mercados que cierran HOY o MAÑANA (regla fija) -->
+      <div style="margin-bottom:20px;padding:10px 12px;background:#9D5CF611;border:1px solid #9D5CF633;border-radius:8px">
+        <div style="font-size:11px;color:#9D5CF6;font-weight:700">📅 Solo mercados de hoy/mañana</div>
+        <div style="font-size:10px;color:#64748B;margin-top:3px">El bot prioriza cierres de HOY; si no llena el presupuesto, usa los de MAÑANA.</div>
       </div>
 
       <!-- Kelly Indicator -->
@@ -240,6 +284,11 @@
           <span style="font-size:14px;font-weight:700">⚡ Señales en Vivo</span>
           <span id="badgeSenales" style="background:#7C3AED33;color:#9D5CF6;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:700">0 LISTAS</span>
         </div>
+        <!-- Circuit breaker: aviso inline en señales -->
+        <div id="circuitAlertSenales" style="display:none;background:#FF456015;border:1px solid #FF4560;border-radius:8px;padding:10px 12px;margin-bottom:10px;align-items:center;justify-content:space-between;gap:8px">
+          <span style="font-size:12px;color:#FF4560;font-weight:700" id="circuitSenalesText">🚨 Circuit breaker activo (8 pérdidas seguidas). Las compras automáticas están pausadas.</span>
+          <button onclick="resetCircuit()" style="background:#FF456033;border:1px solid #FF4560;border-radius:6px;color:#FF4560;font-size:11px;font-weight:700;padding:4px 10px;cursor:pointer;white-space:nowrap">✅ Reiniciar</button>
+        </div>
         <div id="senalesList" style="max-height:380px;overflow-y:auto"></div>
       </div>
     </div>
@@ -248,7 +297,11 @@
     <div class="mobile-section" id="seccionPosiciones">
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-          <span style="font-size:14px;font-weight:700">📊 Posiciones Abiertas</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:14px;font-weight:700">📊 Posiciones Abiertas</span>
+            <span id="badgePosiciones" style="background:#7C3AED33;color:#9D5CF6;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:700">0</span>
+            <span id="badgeCopy" style="background:#00D97E22;color:#00D97E;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:700;display:none">🔁 0</span>
+          </div>
           <span id="unrealPnl" class="mono" style="font-size:14px;font-weight:700;color:#9D5CF6">$0.00</span>
         </div>
         <div id="posicionesList" style="max-height:280px;overflow-y:auto">
@@ -360,10 +413,17 @@
 
     <div style="margin-bottom:20px">
       <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-        <span style="font-size:13px">Mínimo de Odds</span>
-        <span id="oddsValM" class="mono" style="font-weight:700;color:#9D5CF6">70%</span>
+        <span style="font-size:13px">Rango de Odds</span>
+        <span id="oddsValM" class="mono" style="font-weight:700;color:#9D5CF6">70%–85%</span>
       </div>
-      <input type="range" min="60" max="90" value="70" oninput="updateOdds(this.value)">
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:#64748B;margin-bottom:2px">
+        <span>Mínimo</span><span id="oddsMinDisplayM">70%</span>
+      </div>
+      <input type="range" min="55" max="95" value="70" id="oddsSliderM" oninput="updateMinOdds(this.value)">
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:#64748B;margin:6px 0 2px">
+        <span>Máximo</span><span id="oddsMaxDisplayM">85%</span>
+      </div>
+      <input type="range" min="60" max="98" value="85" id="oddsMaxSliderM" oninput="updateMaxOdds(this.value)">
     </div>
 
     <div class="card-dark" style="text-align:center">
@@ -414,11 +474,29 @@ const balanceInicial = parseFloat(localStorage.getItem("balanceInicial") || "59"
 const CATS = { SPX: "#00D97E", NQ: "#3B82F6", DOW: "#6366F1", RUSSELL: "#818CF8", VIX: "#EC4899", CRYPTO: "#9D5CF6", BEISBOL: "#10B981", NBA: "#F97316", NFL: "#8B5CF6", NHL: "#0EA5E9", SOCCER: "#06B6D4", TENIS: "#84CC16", GOLF: "#22C55E", F1: "#DC2626", SPORTS: "#00D97E", UFC: "#F59E0B", MACRO: "#38BDF8", POLITICA: "#EF4444", WILDCARD: "#64748B" };
 const categoriasActivas = { SPX: true, NQ: true, DOW: true, RUSSELL: true, VIX: false, CRYPTO: true, BEISBOL: true, NBA: true, NFL: true, NHL: true, SOCCER: true, TENIS: true, GOLF: true, F1: true, SPORTS: true, UFC: true, MACRO: true, POLITICA: true };
 
+// Escapa HTML para prevenir XSS al insertar datos externos via innerHTML
+const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#x27;");
+
 // ── UTILIDADES ────────────────────────────────────────────────────────────────
 const fmt  = n => parseFloat(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtK = n => n >= 1000 ? `${(n/1000).toFixed(0)}k` : n;
 const colorPN = n => parseFloat(n) >= 0 ? "#00D97E" : "#FF4560";
 const signPN  = n => parseFloat(n) >= 0 ? "+" : "";
+
+// Tiempo restante hasta el cierre del mercado, en horas (o días+horas si es largo)
+function tiempoRestante(endMs) {
+  if (!endMs) return null;
+  const ms = endMs - Date.now();
+  if (ms <= 0) return { txt: "cerrando…", color: "#FF4560" };
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  let txt;
+  if (h < 1)        txt = `${m}min`;
+  else if (h < 48)  txt = `${h}h`;
+  else              txt = `${Math.floor(h/24)}d ${h%24}h`;
+  const color = h < 3 ? "#FF4560" : h < 12 ? "#F59E0B" : "#64748B";  // urgencia por color
+  return { txt, color };
+}
 
 function showToast(msg, tipo, ms) {
   const t = document.getElementById("toast");
@@ -468,6 +546,14 @@ function updateUI() {
   const pnl     = estado.pnlHoy  || 0;
   const wr      = estado.winRate  || 0;
 
+  // Badge de posiciones copy trade
+  const bc = document.getElementById("badgeCopy");
+  if (bc) {
+    const nCopy = estado.posicionesCopy || 0;
+    bc.textContent = `🔁 ${nCopy}`;
+    bc.style.display = nCopy > 0 ? "inline-block" : "none";
+  }
+
   document.getElementById("navBalance").textContent  = `$${fmt(balance)}`;
   document.getElementById("navPnl").textContent      = `${signPN(pnl)}$${fmt(Math.abs(pnl))} hoy`;
   document.getElementById("navPnl").style.color      = colorPN(pnl);
@@ -478,6 +564,13 @@ function updateUI() {
     document.getElementById("statEnPos").textContent = `$${fmt(estado.balanceEnPos)}`;
   document.getElementById("statPnl").textContent     = `${signPN(pnl)}$${fmt(Math.abs(pnl))}`;
   document.getElementById("statPnl").style.color     = colorPN(pnl);
+  const elTot = document.getElementById("statPnlTotal");
+  if (elTot) {
+    if (estado.pnlTotal != null) {
+      elTot.textContent = `${signPN(estado.pnlTotal)}$${fmt(Math.abs(estado.pnlTotal))}`;
+      elTot.style.color = colorPN(estado.pnlTotal);
+    } else { elTot.textContent = "—"; elTot.style.color = "#64748B"; }
+  }
   document.getElementById("statWR").textContent      = `${wr}%`;
   document.getElementById("statWR").style.color      = wr >= 74 ? "#00D97E" : "#FF4560";
   document.getElementById("statTrades").textContent  = estado.tradesHoy || 0;
@@ -495,6 +588,27 @@ function updateUI() {
   if (document.getElementById("kellyValM"))
     document.getElementById("kellyValM").textContent = `$${fmt(kelly)}`;
 
+  // Sync sliders with saved server config
+  if (estado.stake != null) {
+    ["stakeSlider","stakeSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = estado.stake; });
+    ["stakeVal","stakeValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${estado.stake}`; });
+    // Actualizar stake global para que los botones de señales muestren el valor correcto
+    if (window._stakeActual !== estado.stake) { window._stakeActual = estado.stake; fetchSenales(); }
+  }
+  if (estado.minOdds != null || estado.maxOdds != null) {
+    const minV = Math.round((estado.minOdds || 0.70) * 100);
+    const maxV = Math.round((estado.maxOdds || 0.85) * 100);
+    ["oddsSlider","oddsSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = minV; });
+    ["oddsMaxSlider","oddsMaxSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = maxV; });
+    ["oddsMinDisplay","oddsMinDisplayM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${minV}%`; });
+    ["oddsMaxDisplay","oddsMaxDisplayM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${maxV}%`; });
+    ["oddsVal","oddsValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${minV}%–${maxV}%`; });
+  }
+  if (estado.maxHoldHoras != null) {
+    ["holdSlider","holdSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = estado.maxHoldHoras; });
+    ["holdVal","holdValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${estado.maxHoldHoras}h`; });
+  }
+
   // Bot toggle
   const toggles = [["botToggle","botKnob"],["botToggleMobile","botKnobMobile"]];
   toggles.forEach(([tid, kid]) => {
@@ -506,6 +620,27 @@ function updateUI() {
     }
   });
 
+  // Botón grande de Detener/Activar bot
+  const bs = document.getElementById("btnStopBot");
+  if (bs) {
+    if (botOn) {
+      bs.textContent = "⏸ DETENER BOT";
+      bs.style.background = "#FF456022"; bs.style.color = "#FF4560"; bs.style.border = "1px solid #FF4560";
+    } else {
+      bs.textContent = "▶ ACTIVAR BOT";
+      bs.style.background = "#00D97E22"; bs.style.color = "#00D97E"; bs.style.border = "1px solid #00D97E";
+    }
+  }
+
+  // Toggle de reinvertir
+  if (estado.reinvertir != null) { window._reinvertir = estado.reinvertir; pintarReinvertir(estado.reinvertir); }
+
+  // Nota del presupuesto en modo real
+  const bn = document.getElementById("budgetNota");
+  if (bn) bn.textContent = estado.modoReal
+    ? `Operas con tu balance real: $${fmt(estado.balance)}. El límite frena nuevas compras al alcanzarlo.`
+    : "";
+
   // Status dot
   document.getElementById("statusDot").style.background   = botOn ? "#00D97E" : "#FF4560";
   document.getElementById("statusLabel").textContent       = botOn ? "EN VIVO" : "PAUSADO";
@@ -513,6 +648,29 @@ function updateUI() {
 
   // Circuit breaker
   document.getElementById("circuitAlert").style.display = estado.circuitBreaker ? "block" : "none";
+  const cb2 = document.getElementById("circuitAlertSenales");
+  if (cb2) cb2.style.display = estado.circuitBreaker ? "flex" : "none";
+  // Texto dinámico en el banner
+  const rachaEl = document.getElementById("circuitRachaText");
+  if (rachaEl) rachaEl.textContent = `${estado.rachaPerder || 8} pérdidas seguidas — compras pausadas`;
+  const autoResetEl = document.getElementById("circuitAutoReset");
+  if (autoResetEl && estado.autoResetEn) {
+    const minLeft = Math.max(0, Math.ceil((estado.autoResetEn - Date.now()) / 60000));
+    autoResetEl.textContent = minLeft > 0 ? `⏱ Auto-reinicio en ${minLeft} min` : "⏱ Auto-reiniciando…";
+  } else if (autoResetEl) { autoResetEl.textContent = ""; }
+  // Racha de advertencia (sin circuit breaker aún)
+  const rachaAlert = document.getElementById("rachaAlerta");
+  if (rachaAlert) {
+    const r = estado.rachaPerder || 0;
+    if (!estado.circuitBreaker && r >= 3) {
+      rachaAlert.style.display = "block";
+      rachaAlert.textContent = `⚠️ ${r} pérdidas seguidas (circuit breaker se activa a las 8)`;
+    } else { rachaAlert.style.display = "none"; }
+  }
+  const senalesText = document.getElementById("circuitSenalesText");
+  if (senalesText && estado.rachaPerder) {
+    senalesText.textContent = `🚨 Circuit breaker activo (${estado.rachaPerder} pérdidas seguidas). Las compras automáticas están pausadas.`;
+  }
 
   // ROI y ganancia — base = primer balance REAL visto (no el presupuesto fijo)
   const base = estado.balanceBase || estado.presupuestoTotal || balanceInicial;
@@ -558,30 +716,46 @@ function renderSenal(s) {
       <div style="flex:1;margin-right:10px">
         <span class="cat-badge" style="background:${cc}22;color:${cc}">${s.categoria}</span>
         <span class="strength-badge" style="background:${fColor}22;color:${fColor};margin-left:6px">${enVivo ? "🔴 EN VIVO" : fuerza}</span>
-        <div style="font-size:14px;font-weight:600;color:#E2E8F0;margin-top:6px;line-height:1.3">${s.titulo}</div>
+        <div style="font-size:14px;font-weight:600;color:#E2E8F0;margin-top:6px;line-height:1.3">${esc(s.titulo)}</div>
       </div>
       <div style="text-align:right;flex-shrink:0">
         <div class="mono" style="font-size:24px;font-weight:900;color:${prob>=75?"#00D97E":"#F59E0B"}">${prob}%</div>
-        <div style="font-size:10px;color:#64748B">${s.diasRestantes}d restantes</div>
       </div>
     </div>
     <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
-      <span style="font-size:11px;color:#64748B">Vol: $${fmtK(s.volumen)}</span>
-      <span style="font-size:11px;color:#64748B">Liq: $${fmtK(s.liquidez)}</span>
-      <span style="font-size:11px;color:#9D5CF6">👥 ${s.tradersCount} traders</span>
-    </div>
+      ${s.volumen   ? `<span style="font-size:11px;color:#64748B">Vol: $${fmtK(s.volumen)}</span>` : ""}
+      ${s.liquidez  ? `<span style="font-size:11px;color:#64748B">Liq: $${fmtK(s.liquidez)}</span>` : ""}
+      ${s.tradersCount ? `<span style="font-size:11px;color:#9D5CF6">👥 ${s.tradersCount} traders</span>` : ""}
+      ${(() => { const tr = tiempoRestante(s.endMs); return tr
+        ? `<span style="font-size:11px;color:${tr.color};font-weight:700">⏳ cierra en ${tr.txt}</span>`
+        : `<span style="font-size:11px;color:#64748B">${s.diasRestantes}d restantes</span>`; })()}
     <div style="display:flex;gap:8px">
-      <button class="btn-purple" style="flex:1" onclick="ejecutarSenal(${s.id},'${s.titulo}')">COMPRAR $${s.stake}</button>
+      <button class="btn-purple" style="flex:1" onclick="ejecutarSenal(${s.id},this)" data-titulo="${esc(s.titulo)}">COMPRAR $${window._stakeActual || s.stake}</button>
       <button class="btn-gray" style="flex:1" onclick="saltarSenal(${s.id})">SALTAR</button>
     </div>
   </div>`;
 }
 
-async function ejecutarSenal(id, titulo) {
-  showPulse();
-  const r = await fetch(`${API}/signals/${id}/ejecutar`, { method:"POST" });
-  const d = await r.json();
-  if (d.success) { showToast(`✅ ${titulo}`, "win"); fetchSenales(); fetchPosiciones(); fetchStatus(); }
+async function ejecutarSenal(id, btn) {
+  const titulo = btn?.dataset?.titulo || "";
+  btn.disabled = true;
+  btn.textContent = "...";
+  try {
+    const r = await fetch(`${API}/signals/${id}/ejecutar`, { method:"POST" });
+    const d = await r.json();
+    if (d.success) {
+      showToast(`✅ Comprado $${d.trade?.stake || ""} — ${titulo.slice(0,30)}`, "win");
+      fetchSenales(); fetchPosiciones(); fetchStatus();
+    } else {
+      showToast(`⚠️ ${d.error || "Error al ejecutar"}`, "neutral", 5000);
+      btn.disabled = false;
+      btn.textContent = `COMPRAR $${window._stakeActual || ""}`;
+    }
+  } catch(e) {
+    showToast("⚠️ Sin conexión con el servidor", "neutral");
+    btn.disabled = false;
+    btn.textContent = `COMPRAR $${window._stakeActual || ""}`;
+  }
 }
 
 async function saltarSenal(id) {
@@ -598,6 +772,8 @@ async function fetchPosiciones() {
     const unrealized = pos.reduce((s, t) => s + (t.pnl || 0), 0);
     if (document.getElementById("unrealPnl"))
       document.getElementById("unrealPnl").textContent = `${signPN(unrealized)}$${fmt(Math.abs(unrealized))}`;
+    if (document.getElementById("badgePosiciones"))
+      document.getElementById("badgePosiciones").textContent = pos.length;
 
     const html = pos.length === 0
       ? `<div style="text-align:center;color:#64748B;padding:30px">Sin posiciones abiertas</div>`
@@ -611,12 +787,15 @@ function renderPosicion(t) {
   const pnl = t.pnl || 0;
   const entrada = Math.round((t.oddsEntrada || 0) * 100);
   const actual  = Math.round((t.oddsActual  || 0) * 100);
+  const tr = tiempoRestante(t.endMs);
+  const trChip = tr ? `<span style="font-size:10px;color:${tr.color};font-weight:700;white-space:nowrap">⏳ ${tr.txt}</span>` : "";
   return `
   <div style="padding:10px 0;border-bottom:1px solid #1E2030">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
       <div>
         <span class="cat-badge" style="background:${cc}22;color:${cc};font-size:9px">${t.categoria}</span>
-        <div style="font-size:13px;font-weight:600;margin-top:4px">${t.titulo}</div>
+        ${trChip}
+        <div style="font-size:13px;font-weight:600;margin-top:4px">${esc(t.titulo)}</div>
         <div style="font-size:11px;color:#64748B;margin-top:2px">${entrada}% → <span style="color:${actual>=entrada?"#00D97E":"#FF4560"}">${actual}%</span> · Stake: $${fmt(t.stake)}</div>
       </div>
       <div style="text-align:right">
@@ -625,22 +804,35 @@ function renderPosicion(t) {
       </div>
     </div>
     <div style="display:flex;gap:6px">
-      <button class="btn-green" style="flex:1;font-size:11px;padding:6px" onclick="aumentarPosicion(${t.id},'${t.titulo}')">+ AUMENTAR</button>
-      <button class="btn-red"   style="flex:1;font-size:11px;padding:6px" onclick="cerrarPosicion(${t.id},'${t.titulo}',${t.oddsActual},${t.stake})">✕ CERRAR $${fmt(t.stake * (t.oddsActual||1))}</button>
+      <button class="btn-green" style="flex:1;font-size:11px;padding:6px" onclick="aumentarPosicion(${t.id},this)" data-titulo="${esc(t.titulo)}">+ AUMENTAR</button>
+      <button class="btn-red"   style="flex:1;font-size:11px;padding:6px" onclick="cerrarPosicion(${t.id},this)" data-titulo="${esc(t.titulo)}" data-odds="${t.oddsActual}" data-stake="${t.stake}">✕ CERRAR $${fmt((t.shares||0) * (t.oddsActual||1))}</button>
     </div>
   </div>`;
 }
 
-async function cerrarPosicion(id, titulo, oddsActual, stake) {
-  if (!confirm(`¿Cerrar "${titulo}"?\nRecibirás: $${fmt(stake * oddsActual)}`)) return;
+async function cerrarPosicion(id, btn) {
+  const titulo   = btn.dataset.titulo || "";
+  const oddsActual = parseFloat(btn.dataset.odds);
+  const stake    = parseFloat(btn.dataset.stake);
+  const ok = await abrirModal({
+    icono:"🔒", titulo:"Cerrar posición",
+    mensaje:`¿Cerrar <b style="color:#E2E8F0">${esc(titulo)}</b>?<br><span style="color:#64748B;font-size:12px">Recibirás aprox: <span class="mono" style="color:#00D97E">$${fmt(stake * (oddsActual||1))}</span></span>`,
+    confirmTxt:"Cerrar", confirmTipo:"red",
+  });
+  if (!ok) return;
   const r = await fetch(`${API}/trades/${id}/cerrar`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({}) });
   const d = await r.json();
   if (d.success) { showToast(`✅ Cerrado: ${signPN(d.pnl)}$${fmt(Math.abs(d.pnl))}`, d.pnl >= 0 ? "win" : "loss"); fetchPosiciones(); fetchStatus(); fetchHistorial(); }
 }
 
-async function aumentarPosicion(id, titulo) {
-  const monto = prompt(`¿Cuánto quieres agregar a "${titulo}"?\nEscribe el monto en dólares:`);
-  if (!monto || isNaN(monto)) return;
+async function aumentarPosicion(id, btn) {
+  const titulo = btn.dataset.titulo || "";
+  const monto = await abrirModal({
+    icono:"📈", titulo:"Aumentar posición",
+    mensaje:`¿Cuánto quieres agregar a <b style="color:#E2E8F0">${esc(titulo)}</b>?`,
+    input:true, inputDefault:"3", confirmTxt:"Aumentar", confirmTipo:"green",
+  });
+  if (monto === null) return;
   const r = await fetch(`${API}/trades/${id}/aumentar`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ monto: parseFloat(monto) }) });
   const d = await r.json();
   if (d.success) { showPulse(); showToast(`✅ Aumentado: Nuevo total $${fmt(d.nuevoStake)}`, "win"); fetchPosiciones(); fetchStatus(); }
@@ -660,7 +852,7 @@ async function fetchHistorial() {
       return `
       <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1E2030;font-size:12px">
         <span style="color:#64748B;min-width:38px;font-size:10px">${hora}</span>
-        <span style="flex:1;color:#E2E8F0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.titulo}</span>
+        <span style="flex:1;color:#E2E8F0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.titulo)}</span>
         <span class="mono" style="color:#F59E0B;flex-shrink:0">${Math.round((t.oddsEntrada||0)*100)}%</span>
         <span class="mono" style="color:#64748B;flex-shrink:0">$${fmt(t.stake)}</span>
         <span class="mono" style="color:${colorPN(t.pnl)};flex-shrink:0;font-weight:700">${signPN(t.pnl)}$${fmt(Math.abs(t.pnl||0))}</span>
@@ -685,7 +877,7 @@ async function fetchTraders() {
       return `
       <div style="margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px">
-          <span>${t.alias || t.wallet}</span>
+          <span>${esc(t.alias || t.wallet)}</span>
           <span style="color:#9D5CF6;font-weight:700">${t.winRate}% WR</span>
         </div>
         <div style="background:#1E2030;border-radius:4px;height:5px">
@@ -706,8 +898,8 @@ function renderTrader(t) {
   <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #1E2030">
     <div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#7C3AED,#9D5CF6);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0">${initials}</div>
     <div style="flex:1;min-width:0">
-      <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.alias || t.wallet+"…"}</div>
-      <div style="font-size:10px;color:#64748B">${t.categoria} · activo ${t.activo}</div>
+      <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.alias || t.wallet+"…")}</div>
+      <div style="font-size:10px;color:#64748B">${esc(t.categoria)} · activo ${esc(t.activo)}</div>
     </div>
     <div style="text-align:center;min-width:36px">
       <div style="font-size:11px;font-weight:700;color:${sc}">${t.score}</div>
@@ -717,13 +909,14 @@ function renderTrader(t) {
       <div class="mono" style="font-size:11px;font-weight:700;color:#00D97E">+${t.roi}%</div>
       <div style="font-size:9px;color:#64748B">ROI</div>
     </div>
-    <button onclick="toggleTrader('${t.wallet}',this)" style="background:${t.copiando?"#7C3AED":"#1A1C26"};border:1px solid ${t.copiando?"#7C3AED":"#1E2030"};border-radius:6px;padding:4px 8px;color:${t.copiando?"#fff":"#64748B"};font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">
+    <button onclick="toggleTrader(this)" data-wallet="${esc(t.wallet)}" style="background:${t.copiando?"#7C3AED":"#1A1C26"};border:1px solid ${t.copiando?"#7C3AED":"#1E2030"};border-radius:6px;padding:4px 8px;color:${t.copiando?"#fff":"#64748B"};font-size:10px;font-weight:700;cursor:pointer;flex-shrink:0">
       ${t.copiando?"✓ COPY":"COPY"}
     </button>
   </div>`;
 }
 
-async function toggleTrader(wallet, btn) {
+async function toggleTrader(btn) {
+  const wallet = btn.dataset.wallet;
   const activo = btn.textContent.includes("✓");
   // Feedback inmediato
   btn.textContent      = activo ? "COPY" : "✓ COPY";
@@ -783,7 +976,7 @@ async function toggleBot() {
 
 async function resetCircuit() {
   await fetch(`${API}/bot/reset-circuit`, { method:"POST" });
-  showToast("✅ Circuit breaker reiniciado", "win");
+  showToast("✅ Circuit breaker reiniciado — el bot puede comprar de nuevo", "win", 4000);
   fetchStatus();
 }
 
@@ -798,6 +991,21 @@ function setPresupuestoCustom() {
   const val = parseFloat(document.getElementById("customPresupuesto").value);
   if (!val || val < 1) return;
   setPresupuesto(val);
+  showToast(`✅ Presupuesto: $${val}`, "win");
+}
+
+function toggleReinvertir() {
+  const nuevo = !window._reinvertir;
+  window._reinvertir = nuevo;
+  pintarReinvertir(nuevo);
+  fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ reinvertir: nuevo }) });
+  showToast(nuevo ? "♻️ Reinvirtiendo ganancias" : "Reinversión desactivada", nuevo ? "win" : "neutral");
+}
+function pintarReinvertir(on) {
+  const t = document.getElementById("reinvertirToggle");
+  const k = document.getElementById("reinvertirKnob");
+  if (t) t.style.background = on ? "#00D97E" : "#1E2030";
+  if (k) k.style.left = on ? "23px" : "3px";
 }
 
 function updateStake(val) {
@@ -807,11 +1015,28 @@ function updateStake(val) {
   fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ stake: val }) });
 }
 
-function updateOdds(val) {
-  document.getElementById("oddsVal").textContent = `${val}%`;
-  if (document.getElementById("oddsValM"))
-    document.getElementById("oddsValM").textContent = `${val}%`;
+function updateHold(val) {
+  document.getElementById("holdVal").textContent = `${val}h`;
+  fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ maxHoldHoras: parseInt(val) }) });
+}
+
+
+function updateMinOdds(val) {
+  val = parseInt(val);
+  const maxVal = parseInt(document.getElementById("oddsMaxSlider")?.value || document.getElementById("oddsMaxSliderM")?.value || 85);
+  if (val >= maxVal) { val = maxVal - 5; ["oddsSlider","oddsSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = val; }); }
+  ["oddsMinDisplay","oddsMinDisplayM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${val}%`; });
+  ["oddsVal","oddsValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${val}%–${maxVal}%`; });
   fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ minOdds: val/100 }) });
+}
+
+function updateMaxOdds(val) {
+  val = parseInt(val);
+  const minVal = parseInt(document.getElementById("oddsSlider")?.value || document.getElementById("oddsSliderM")?.value || 70);
+  if (val <= minVal) { val = minVal + 5; ["oddsMaxSlider","oddsMaxSliderM"].forEach(id => { const el = document.getElementById(id); if(el) el.value = val; }); }
+  ["oddsMaxDisplay","oddsMaxDisplayM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${val}%`; });
+  ["oddsVal","oddsValM"].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = `${minVal}%–${val}%`; });
+  fetch(`${API}/config`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ maxOdds: val/100 }) });
 }
 
 // ── CATEGORÍAS ────────────────────────────────────────────────────────────────
@@ -860,7 +1085,8 @@ async function fetchMisPosiciones() {
       const icono     = p.icono
         ? `<img src="${p.icono}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'">`
         : `<div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#1E2030,#2A2D3A);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px">⬡</div>`;
-      const slugJS    = (p.slug || "").replace(/'/g, "\\'");
+      const slugEsc   = esc(p.slug || "")
+;
 
       // Barra de mercado
       const barPct    = ahoraNum != null ? ahoraNum : 0;
@@ -879,9 +1105,9 @@ async function fetchMisPosiciones() {
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
           ${icono}
           <div style="flex:1;overflow:hidden">
-            <div style="color:#E2E8F0;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.titulo}</div>
+            <div style="color:#E2E8F0;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.titulo)}</div>
             <div style="font-size:10px;margin-top:1px">
-              <span style="color:${outColor};font-weight:700">${p.outcome || "OPEN"}</span>
+              <span style="color:${outColor};font-weight:700">${esc(p.outcome || "OPEN")}</span>
               <span style="color:#64748B"> · ${p.shares} shares</span>
             </div>
           </div>
@@ -914,8 +1140,8 @@ async function fetchMisPosiciones() {
 
         <!-- Botones -->
         <div style="display:flex;gap:6px">
-          <button onclick="comprarMas('${slugJS}','${p.titulo.replace(/'/g,"")}')" style="flex:1;padding:7px;border:none;border-radius:8px;background:#16261c;color:#00D97E;font-weight:700;cursor:pointer;font-size:11px">+ Comprar</button>
-          <button onclick="venderPos('${slugJS}','${p.titulo.replace(/'/g,"")}',${p.shares})" style="flex:1;padding:7px;border:none;border-radius:8px;background:#2a1518;color:#FF4560;font-weight:700;cursor:pointer;font-size:11px">Vender</button>
+          <button onclick="comprarMas(this)" data-slug="${slugEsc}" data-titulo="${esc(p.titulo)}" style="flex:1;padding:7px;border:none;border-radius:8px;background:#16261c;color:#00D97E;font-weight:700;cursor:pointer;font-size:11px">+ Comprar</button>
+          <button onclick="venderPos(this)" data-slug="${slugEsc}" data-titulo="${esc(p.titulo)}" data-shares="${p.shares}" style="flex:1;padding:7px;border:none;border-radius:8px;background:#2a1518;color:#FF4560;font-weight:700;cursor:pointer;font-size:11px">Vender</button>
         </div>
       </div>`;
     }).join("");
@@ -986,10 +1212,12 @@ function abrirModal(opts) {
   });
 }
 
-async function comprarMas(slug, titulo) {
+async function comprarMas(btn) {
+  const slug   = btn.dataset.slug;
+  const titulo = btn.dataset.titulo;
   const monto = await abrirModal({
     icono: "🟢", titulo: "Comprar más",
-    mensaje: `¿Cuánto quieres invertir en <b style="color:#E2E8F0">${titulo}</b>?`,
+    mensaje: `¿Cuánto quieres invertir en <b style="color:#E2E8F0">${esc(titulo)}</b>?`,
     input: true, inputDefault: "3", confirmTxt: "Comprar", confirmTipo: "green",
   });
   if (monto === null) return;
@@ -1006,11 +1234,14 @@ async function comprarMas(slug, titulo) {
   } catch(e) { showToast("⚠️ Sin conexión", "neutral"); }
 }
 
-async function venderPos(slug, titulo, sharesTotal) {
+async function venderPos(btn) {
+  const slug       = btn.dataset.slug;
+  const titulo     = btn.dataset.titulo;
+  const sharesTotal = btn.dataset.shares;
   const total = parseInt(sharesTotal) || 0;
   const val = await abrirModal({
     icono: "🔴", titulo: "Vender posición",
-    mensaje: `¿Cuántos shares de <b style="color:#E2E8F0">${titulo}</b> quieres vender?`,
+    mensaje: `¿Cuántos shares de <b style="color:#E2E8F0">${esc(titulo)}</b> quieres vender?`,
     input: true, inputDefault: total, inputLabel: "SHARES A VENDER", inputPrefix: "",
     inputHelp: `Tienes ${total} shares · usa los botones o escribe la cantidad`,
     quickMax: total, confirmTxt: "Vender", confirmTipo: "red",

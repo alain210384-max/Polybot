@@ -26,13 +26,12 @@ let metricas = { tradesHoy: 0, overlapsHoy: 0 };
 
 const DATA_API = "https://data-api.polymarket.com";
 
-// ==================== HELPERS ====================
 const getBankroll = () => Math.max(10, bankrollActual);
 
 const detectarConsensus = async () => {
   if (!CFG.autoConsensus) return;
 
-  console.log("🔍 Buscando overlaps entre top traders...");
+  console.log("🔍 Buscando overlaps entre top 20 traders...");
 
   try {
     const lb = await axios.get(`${DATA_API}/leaderboard`, { 
@@ -70,8 +69,7 @@ const detectarConsensus = async () => {
         overlap: traders.length,
         stake: stake,
         prob: parseFloat(p.price || 0.5),
-        estado: "abierto",
-        abiertaEn: new Date().toISOString()
+        estado: "abierto"
       });
 
       metricas.tradesHoy++;
@@ -79,12 +77,11 @@ const detectarConsensus = async () => {
       console.log(`✅ OVERLAP ${traders.length} traders → $${stake}`);
     }
   } catch(e) {
-    console.log("Error en consensus:", e.message);
+    console.log("Error:", e.message);
   }
 };
 
-// ==================== TIMERS ====================
-setInterval(detectarConsensus, 90000); // cada 90 segundos
+setInterval(detectarConsensus, 90000);
 
 // ==================== DASHBOARD ====================
 app.get("/api/status", (req, res) => {
@@ -93,8 +90,7 @@ app.get("/api/status", (req, res) => {
     posiciones: posicionesAbiertas.length,
     tradesHoy: metricas.tradesHoy,
     overlapsHoy: metricas.overlapsHoy,
-    status: "✅ CONSENSO API REAL ACTIVO",
-    version: "FINAL"
+    status: "✅ CONSENSO API REAL ACTIVO"
   });
 });
 
@@ -104,5 +100,5 @@ const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => {
   console.log(`\n🚀 POLYBOT FINAL - CONSENSO API REAL`);
   console.log(`💰 Bankroll: $${getBankroll()}`);
-  console.log(`📡 Corriendo en http://localhost:${PORT}\n`);
+  console.log(`📡 Listo y funcionando\n`);
 });
