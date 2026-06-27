@@ -267,8 +267,14 @@
         <div style="font-size:10px;color:#64748B;margin-top:2px">por trade óptimo</div>
       </div>
 
+      <!-- Rendimiento por categoría -->
+      <div style="font-size:11px;color:#64748B;letter-spacing:1px;margin-bottom:8px;margin-top:4px">RENDIMIENTO POR CATEGORÍA</div>
+      <div id="statsCategorias" style="margin-bottom:16px;font-size:11px">
+        <div style="color:#64748B;text-align:center;padding:8px">Cargando…</div>
+      </div>
+
       <!-- Categorías -->
-      <div style="font-size:11px;color:#64748B;letter-spacing:1px;margin-bottom:10px">CATEGORÍAS</div>
+      <div style="font-size:11px;color:#64748B;letter-spacing:1px;margin-bottom:10px">FILTRO DE CATEGORÍAS</div>
       <div id="categorias">
         <!-- Generado por JS -->
       </div>
@@ -587,6 +593,32 @@ function updateUI() {
   document.getElementById("kellyVal").textContent  = `$${fmt(kelly)}`;
   if (document.getElementById("kellyValM"))
     document.getElementById("kellyValM").textContent = `$${fmt(kelly)}`;
+
+  // Rendimiento por categoría
+  const catEl = document.getElementById("statsCategorias");
+  if (catEl && estado.statsPorCategoria) {
+    const cats = Object.entries(estado.statsPorCategoria)
+      .sort((a, b) => b[1].pnl - a[1].pnl);
+    if (cats.length === 0) {
+      catEl.innerHTML = `<div style="color:#64748B;text-align:center;padding:8px">Sin datos aún</div>`;
+    } else {
+      catEl.innerHTML = cats.map(([cat, s]) => {
+        const total = s.ganados + s.perdidos;
+        const wr = total > 0 ? Math.round(s.ganados / total * 100) : 0;
+        const pnlColor = s.pnl >= 0 ? "#00D97E" : "#FF4560";
+        const wrColor  = wr >= 65 ? "#00D97E" : wr >= 50 ? "#F59E0B" : "#FF4560";
+        const emoji    = s.pnl >= 0 ? "✅" : "❌";
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #1E2030">
+          <span style="color:#E2E8F0">${emoji} ${cat}</span>
+          <span style="color:#64748B;font-size:10px">${s.ganados}W/${s.perdidos}L</span>
+          <span style="color:${wrColor};font-size:10px;font-weight:700">${wr}%</span>
+          <span style="color:${pnlColor};font-weight:700" class="mono">${s.pnl >= 0 ? "+" : ""}$${Math.abs(s.pnl).toFixed(2)}</span>
+        </div>`;
+      }).join("");
+    }
+  } else if (catEl && !estado.statsPorCategoria) {
+    catEl.innerHTML = `<div style="color:#64748B;text-align:center;padding:8px;font-size:10px">Solo disponible en modo real</div>`;
+  }
 
   // Sync sliders with saved server config
   if (estado.stake != null) {

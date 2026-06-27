@@ -15,7 +15,7 @@ app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
 // ── CONFIG ─────────────────────────────────────────────────────────────────────
 const CFG_FILE = path.join(__dirname, "cfg.json");
 const CFG_DEFAULTS = {
-  minOdds:          0.70,
+  minOdds:          0.60,
   maxOdds:          0.85,
   minLiquidity:     300,
   budget:           parseFloat(process.env.DAILY_BUDGET)    || 59,
@@ -773,6 +773,7 @@ app.get("/api/status", (req, res) => {
     posicionesAbiertas:posicionesAbiertas.length,
     posicionesCopy:posicionesAbiertas.filter(p=>(p.fuerza||"").includes("COPY")).length,
     autoComprar:CFG.autoComprar, autoCopiar:CFG.autoCopiar, reinvertir:CFG.reinvertir,
+    statsPorCategoria: modoReal && statsReales.listo ? statsReales.statsPorCategoria : null,
     maxPositiones:maxPos(), maxHoldHoras:CFG.maxHoldHoras, maxDiasRestantes:CFG.maxDiasRestantes,
   });
 });
@@ -835,21 +836,32 @@ const actualizarStatsReales = async () => {
     const actArr = Array.isArray(actRes?.activities) ? actRes.activities : [];
     const hoy = diaCalendario(Date.now());
     let g = 0, p = 0, pnl = 0, pnlHoy = 0, tradesHoy = 0;
+    const statsCat = {};
     for (const a of actArr) {
       if (!(a.type || "").includes("RESOLUTION")) continue;
-      const r = a.positionResolution || {};
-      const val = parseFloat((num((r.afterPosition||{}).realized) - num((r.beforePosition||{}).realized)).toFixed(2));
+      const r      = a.positionResolution || {};
+      const before = r.beforePosition || {};
+      const after  = r.afterPosition  || {};
+      const meta   = before.marketMetadata || after.marketMetadata || {};
+      const titulo = r.market?.question || meta.title || "";
+      const slug   = r.marketSlug || r.market?.slug || meta.slug || "";
+      const cat    = mapCategoria([], titulo, slug);
+      const val    = parseFloat((num(after.realized) - num(before.realized)).toFixed(2));
       if (val >= 0) g++; else p++;
       pnl += val;
       const ms = parseMs(r.updateTime);
       if (ms && diaCalendario(ms) === hoy) { pnlHoy += val; tradesHoy++; }
+      // acumular stats por categoría
+      if (!statsCat[cat]) statsCat[cat] = { ganados: 0, perdidos: 0, pnl: 0 };
+      if (val >= 0) statsCat[cat].ganados++; else statsCat[cat].perdidos++;
+      statsCat[cat].pnl = parseFloat((statsCat[cat].pnl + val).toFixed(2));
     }
     statsReales = {
       trades: g + p, ganados: g, perdidos: p,
       winRate: (g + p) > 0 ? parseFloat((g / (g + p) * 100).toFixed(1)) : 0,
       pnl: parseFloat(pnl.toFixed(2)),
       pnlHoy: parseFloat(pnlHoy.toFixed(2)),
-      tradesHoy, listo: true,
+      tradesHoy, statsPorCategoria: statsCat, listo: true,
     };
   } catch(e) { console.log("⚠️ Stats reales:", e.message); }
 };
