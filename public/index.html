@@ -4,54 +4,88 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>POLYBOT - Consenso API Real</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
   <style>
-    body { font-family: Arial, sans-serif; background: #0f0f0f; color: #0f0; margin: 0; padding: 20px; }
-    h1 { color: #0f0; }
-    .card { background: #1a1a1a; padding: 15px; margin: 10px 0; border-radius: 8px; }
-    button { padding: 10px 20px; background: #0f0; color: black; border: none; border-radius: 5px; cursor: pointer; }
+    body { background: #0a0a0a; color: #e0e0e0; }
+    .card { background: #1a1a1a; border-radius: 16px; }
   </style>
 </head>
-<body>
-  <h1>🚀 POLYBOT - Consenso API Real</h1>
-  <div class="card">
-    <h2>Estado</h2>
-    <p id="status">Cargando...</p>
-  </div>
-  <div class="card">
-    <h2>Bankroll</h2>
-    <p id="bankroll">$0.00</p>
-  </div>
-  <div class="card">
-    <h2>Posiciones Abiertas</h2>
-    <p id="posiciones">0</p>
-  </div>
-  <div class="card">
-    <h2>Trades Hoy</h2>
-    <p id="tradesHoy">0</p>
-  </div>
-  <div class="card">
-    <h2>Overlaps Detectados</h2>
-    <p id="overlaps">0</p>
+<body class="min-h-screen p-6">
+  <div class="max-w-7xl mx-auto">
+    <div class="flex justify-between items-center mb-8">
+      <h1 class="text-4xl font-bold text-emerald-400">🚀 POLYBOT Consenso</h1>
+      <div class="flex items-center gap-4">
+        <button onclick="toggleBot()" id="pauseBtn"
+          class="px-6 py-3 bg-red-600 hover:bg-red-700 rounded-xl font-medium flex items-center gap-2">
+          <i class="fas fa-pause"></i> PAUSAR BOT
+        </button>
+        <div class="text-right">
+          <div class="text-3xl font-mono font-bold text-emerald-400" id="bankroll">$65.00</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div class="card p-6">
+        <h3 class="text-gray-400">ESTADO</h3>
+        <div class="text-emerald-400 text-2xl font-bold mt-2" id="status">✅ ACTIVO</div>
+      </div>
+      <div class="card p-6">
+        <h3 class="text-gray-400">POSICIONES</h3>
+        <div class="text-4xl font-bold mt-2" id="posiciones">0</div>
+      </div>
+      <div class="card p-6">
+        <h3 class="text-gray-400">TRADES HOY</h3>
+        <div class="text-4xl font-bold mt-2" id="tradesHoy">0</div>
+      </div>
+      <div class="card p-6">
+        <h3 class="text-gray-400">OVERLAPS</h3>
+        <div class="text-4xl font-bold text-emerald-400 mt-2" id="overlaps">0</div>
+      </div>
+    </div>
+
+    <!-- Posiciones Abiertas -->
+    <div class="card p-6 mt-8">
+      <h2 class="text-xl font-semibold mb-4">📍 Posiciones Abiertas</h2>
+      <div id="posicionesList" class="space-y-3"></div>
+    </div>
+
+    <!-- Top Traders -->
+    <div class="card p-6 mt-8">
+      <h2 class="text-xl font-semibold mb-4">🏆 Top Traders (Monitoreados)</h2>
+      <div id="topTraders" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm"></div>
+    </div>
   </div>
 
   <script>
-    async function actualizar() {
+    let isPaused = false;
+
+    async function actualizarDashboard() {
+      if (isPaused) return;
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
-        
-        document.getElementById('status').innerHTML = data.status || 'ACTIVO';
-        document.getElementById('bankroll').innerHTML = '$' + data.bankroll;
-        document.getElementById('posiciones').innerHTML = data.posiciones;
-        document.getElementById('tradesHoy').innerHTML = data.tradesHoy;
-        document.getElementById('overlaps').innerHTML = data.overlapsHoy;
-      } catch(e) {
-        document.getElementById('status').innerHTML = 'Error de conexión';
-      }
+
+        document.getElementById('bankroll').textContent = '$' + (data.bankroll || '0.00');
+        document.getElementById('status').textContent = data.status || 'ACTIVO';
+        document.getElementById('posiciones').textContent = data.posiciones || 0;
+        document.getElementById('tradesHoy').textContent = data.tradesHoy || 0;
+        document.getElementById('overlaps').textContent = data.overlapsHoy || 0;
+      } catch(e) {}
     }
 
-    setInterval(actualizar, 5000);
-    actualizar();
+    function toggleBot() {
+      isPaused = !isPaused;
+      const btn = document.getElementById('pauseBtn');
+      btn.textContent = isPaused ? "▶ REANUDAR BOT" : "⏸ PAUSAR BOT";
+      btn.classList.toggle('bg-red-600', !isPaused);
+      btn.classList.toggle('bg-emerald-600', isPaused);
+    }
+
+    // Actualizar cada 4 segundos
+    setInterval(actualizarDashboard, 4000);
+    actualizarDashboard();
   </script>
 </body>
 </html>
