@@ -296,25 +296,33 @@
     <!-- POSICIONES ABIERTAS -->
     <div class="mobile-section" id="seccionPosiciones">
       <div class="card" style="margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
           <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:14px;font-weight:700">📊 Posiciones Abiertas</span>
+            <span style="font-size:14px;font-weight:700">📊 Posiciones del Bot</span>
             <span id="badgePosiciones" style="background:#7C3AED33;color:#9D5CF6;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:700">0</span>
-            <span id="badgeCopy" style="background:#00D97E22;color:#00D97E;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:700;display:none">🔁 0</span>
           </div>
           <span id="unrealPnl" class="mono" style="font-size:14px;font-weight:700;color:#9D5CF6">$0.00</span>
+        </div>
+        <div style="font-size:10px;color:#64748B;margin-bottom:8px">Lo que abrió el bot (Screener + Consenso)</div>
+        <!-- DESGLOSE POR SISTEMA -->
+        <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+          <span style="background:#3B82F622;color:#3B82F6;font-size:11px;padding:3px 10px;border-radius:8px;font-weight:700">📈 Screener: <span id="cntScreener">0</span></span>
+          <span style="background:#9D5CF622;color:#9D5CF6;font-size:11px;padding:3px 10px;border-radius:8px;font-weight:700">🐋 Consenso: <span id="cntConsenso">0</span></span>
+          <span style="background:#F59E0B22;color:#F59E0B;font-size:11px;padding:3px 10px;border-radius:8px;font-weight:700">✋ Manual: <span id="cntManual">0</span></span>
+          <span id="chipPrevias" style="background:#64748B22;color:#94A3B8;font-size:11px;padding:3px 10px;border-radius:8px;font-weight:700;display:none">🔗 Previas: <span id="cntPrevias">0</span></span>
         </div>
         <div id="posicionesList" style="max-height:280px;overflow-y:auto">
           <div style="text-align:center;color:#64748B;padding:30px">Sin posiciones abiertas</div>
         </div>
       </div>
 
-      <!-- POSICIONES REALES POLYMARKET -->
-      <div class="card" style="margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-          <span style="font-size:14px;font-weight:700">🔗 Mis Posiciones en Polymarket</span>
+      <!-- CARTERA REAL POLYMARKET -->
+      <div class="card" style="margin-bottom:16px;border:1px solid #00D97E33">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <span style="font-size:14px;font-weight:700">🔗 Mi Cartera Real</span>
           <button class="btn-gray" style="font-size:10px;padding:4px 10px" onclick="fetchMisPosiciones()">↻ Sync</button>
         </div>
+        <div style="font-size:10px;color:#64748B;margin-bottom:12px">TODO lo que tienes en tu cuenta de Polymarket (real)</div>
         <div id="misPosicionesList" style="max-height:600px;overflow-y:auto">
           <div style="text-align:center;color:#64748B;padding:20px;font-size:12px">Cargando...</div>
         </div>
@@ -788,6 +796,15 @@ async function fetchPosiciones() {
       document.getElementById("unrealPnl").textContent = `${signPN(unrealized)}$${fmt(Math.abs(unrealized))}`;
     if (document.getElementById("badgePosiciones"))
       document.getElementById("badgePosiciones").textContent = pos.length;
+
+    // Desglose por sistema (Consenso siempre visible, 0 si no hay)
+    const cuenta = f => pos.filter(t => String(t.fuerza||"").includes(f)).length;
+    const nScr = cuenta("SCREENER"), nCon = cuenta("CONSENSO"), nMan = cuenta("MANUAL");
+    const nPrev = pos.length - nScr - nCon - nMan;
+    const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    setTxt("cntScreener", nScr); setTxt("cntConsenso", nCon); setTxt("cntManual", nMan); setTxt("cntPrevias", nPrev);
+    const chipPrev = document.getElementById("chipPrevias");
+    if (chipPrev) chipPrev.style.display = nPrev > 0 ? "inline-block" : "none";
 
     const html = pos.length === 0
       ? `<div style="text-align:center;color:#64748B;padding:30px">Sin posiciones abiertas</div>`
