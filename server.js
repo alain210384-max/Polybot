@@ -36,6 +36,7 @@ const CFG_DEFAULTS = {
   minOverlap:       4,      // nº de top-traders que deben coincidir en el mismo mercado
   topTradersCount:  50,     // cuántos líderes del día se monitorean (pool ancho = hay overlap real)
   autoConsensus:    true,   // detectar consenso en bucle
+  autoScreener:     true,   // Screener nativo .us de favoritos que cierran hoy/mañana
 };
 let CFG = (() => {
   try {
@@ -63,6 +64,7 @@ const marcarOrigen = (slug, origen) => {
 };
 const fuerzaPorOrigen = slug =>
   origenPorSlug[slug] === "CONSENSO" ? "🐋 CONSENSO"
+: origenPorSlug[slug] === "SCREENER" ? "📈 SCREENER"
 : origenPorSlug[slug] === "MANUAL"   ? "✋ MANUAL"
 : "SYNC";
 
@@ -408,7 +410,7 @@ const ejecutarTrade = async (mercado, stake, fuerza, saltaBreaker = false) => {
     pnl: 0, fuerza, endMs: mercado.endMs || null, tradersCount: mercado.tradersCount || 1,
     estado: "abierto", abiertaEn: new Date().toISOString(),
   };
-  marcarOrigen(mercado.slug, fuerza.includes("MANUAL") ? "MANUAL" : "CONSENSO");
+  marcarOrigen(mercado.slug, fuerza.includes("MANUAL") ? "MANUAL" : fuerza.includes("SCREENER") ? "SCREENER" : "CONSENSO");
   posicionesAbiertas.push(trade);
   historialTrades.unshift({ ...trade });
   presupuestoUsado = parseFloat((presupuestoUsado + stake).toFixed(2));
@@ -424,8 +426,10 @@ const ejecutarTrade = async (mercado, stake, fuerza, saltaBreaker = false) => {
 //  Ante cualquier ambigüedad NO compra (se queda en radar). Esto evita comprar el
 //  mercado equivocado (p.ej. "gana el Mundial" 10% vs "gana el partido de hoy" 86%).
 // ════════════════════════════════════════════════════════════════════════════════
-let indiceUS = [];   // [{slug, team, price, q, endMs}]
+let indiceUS = [];    // [{slug, team, price, q, endMs, fecha}] — gemelos para el puente de consenso
+let screenerUS = [];  // favoritos nativos .us que cierran hoy/mañana en rango de odds
 const PRICE_TOL = 0.05;  // tolerancia de acuerdo de precio entre venues
+const fechaTexto = s => { const m=(s||"").match(/(\d{4}-\d{2}-\d{2})/); return m?m[1]:null; };
 
 const teamName = t => typeof t === "string" ? t : (t?.name || t?.fullName || t?.shortName || t?.abbreviation || "");
 const normTeam = s => (s||"").toLowerCase()
@@ -433,7 +437,10 @@ const normTeam = s => (s||"").toLowerCase()
   .replace(/\b(the|fc|cf|sc|ac|club|national|team)\b/g," ")
   .replace(/\s+/g," ").trim();
 
-const construirIndiceUS = async () => {
+// Un solo escaneo del catálogo .us alimenta DOS cosas:
+//  1) indiceUS  → gemelos con equipo para el puente de consenso
+//  2) screenerUS → favoritos nativos que cierran hoy/mañana en rango de odds (compra directa)
+const escanearUS = async () => {
   if (!modoReal) return;
   try {
     const all = [];
@@ -444,20 +451,42 @@ const construirIndiceUS = async () => {
       if (arr.length < 100) break;
     }
     const idx = [];
+    const scr = [];
+    const ahora = Date.now();
     for (const m of all) {
       const L = (m.marketSides || []).find(s => s.long);
       if (!L) continue;
-      const team = normTeam(teamName(L.team));
-      if (!team) continue;
-      idx.push({
-        slug: m.slug, team, price: parseFloat(L.price || 0),
-        q: m.question || m.title || "",
-        endMs: m.endDate ? new Date(m.endDate).getTime() : null,
-      });
+      const price = parseFloat(L.price || 0);
+      // OJO: endDate suele ser el fin del torneo/grupo (lejano). La resolución REAL del
+      // partido es gameStartTime (o la fecha del slug). Usar eso para "cierra hoy/mañana".
+      const slugFecha = fechaTexto(m.slug);
+      const gameMs    = m.gameStartTime ? new Date(m.gameStartTime).getTime() : null;
+      const endMs     = m.endDate ? new Date(m.endDate).getTime() : null;
+      const cierreMs  = gameMs || (slugFecha ? new Date(slugFecha + "T23:59:00-07:00").getTime() : endMs);
+      const fecha     = slugFecha || (cierreMs ? new Date(cierreMs).toISOString().slice(0,10) : null);
+      const team      = normTeam(teamName(L.team));
+      if (team) idx.push({ slug:m.slug, team, price, q:m.question||m.title||"", endMs:cierreMs, fecha });
+
+      // Screener: favorito (precio en rango) que cierra HOY o MAÑANA = dinero rápido
+      if (price >= CFG.minOdds && price <= CFG.maxOdds && cierreMs && cierreMs > ahora) {
+        const diaCierre = diaCierreDeMs(cierreMs);
+        if (diaCierre <= 1) {
+          const titulo = m.question || m.title || m.slug;
+          scr.push({
+            id: idParaMercado(m.slug), marketId: m.slug, slug: m.slug,
+            titulo, categoria: mapCategoria(m.tags||[], titulo, m.slug),
+            prob: parseFloat(price.toFixed(4)), endMs: cierreMs, diaCierre,
+            diasRestantes: Math.max(0, Math.ceil((cierreMs - ahora)/86400000)),
+            tradersCount: 0, fuerza: "📈 SCREENER", stake: CFG.stake,
+          });
+        }
+      }
     }
     indiceUS = idx;
-    console.log(`🔗 Índice US: ${idx.length} mercados con equipo (de ${all.length})`);
-  } catch(e) { console.log("⚠️ Índice US:", e.response?.status || e.message); }
+    scr.sort((a,b) => (a.diaCierre - b.diaCierre) || (b.prob - a.prob));
+    screenerUS = scr.slice(0, 150);
+    console.log(`🔗 US: ${idx.length} con equipo | 📈 Screener: ${scr.length} favoritos hoy/mañana (rango ${(CFG.minOdds*100)|0}-${(CFG.maxOdds*100)|0}%)`);
+  } catch(e) { console.log("⚠️ Escaneo US:", e.response?.status || e.message); }
 };
 
 // Extrae el equipo sujeto de un título "Will X win…" / "X to win…"
@@ -481,11 +510,17 @@ const buscarGemeloUS = (consenso) => {
   const equipo = normTeam(equipoDeTitulo(titulo));
   if (!equipo || equipo.length < 3) return null;
   // 4) Gemelos con equipo EXACTO y precio que CONCUERDA (mismo mercado/escala)
-  const cands = indiceUS.filter(x =>
+  let cands = indiceUS.filter(x =>
     x.team === equipo && x.price > 0 && x.price < 1 &&
     Math.abs(x.price - (consenso.prob || 0)) <= PRICE_TOL
   );
-  // 5) Debe haber EXACTAMENTE un candidato: ambiguo o sin match = no comprar
+  // 5) Si hay varios, desambiguar por FECHA (el partido de HOY vs el torneo/otro día)
+  if (cands.length > 1) {
+    const fechaCons = fechaTexto(consenso.titulo) || fechaTexto(consenso.slug) ||
+                      (consenso.endMs ? new Date(consenso.endMs).toISOString().slice(0,10) : null);
+    if (fechaCons) cands = cands.filter(x => x.fecha === fechaCons);
+  }
+  // 6) Debe quedar EXACTAMENTE un candidato: ambiguo o sin match = no comprar
   if (cands.length !== 1) return null;
   return cands[0];
 };
@@ -644,6 +679,35 @@ const detectarConsensus = async () => {
   if (compradas > 0) console.log(`🐋 Auto-compra: ${compradas} consensos comprados (gemelo US verificado)`);
 };
 
+// ════════════════════════════════════════════════════════════════════════════════
+//  SCREENER NATIVO .us — favoritos que cierran hoy/mañana (motor de volumen diario)
+//  Compra DIRECTA: son mercados de tu propio venue, no hace falta puente.
+// ════════════════════════════════════════════════════════════════════════════════
+const procesarScreener = async () => {
+  if (!CFG.autoScreener) return;
+  // Feed: muestra los favoritos del screener como señales en el dashboard
+  const nuevas = screenerUS.filter(c => c.slug &&
+    !senalesPendientes.find(s => s.marketId === c.marketId) &&
+    !posicionesAbiertas.find(p => p.marketId === c.marketId || p.slug === c.slug));
+  if (nuevas.length) senalesPendientes = [...nuevas, ...senalesPendientes].slice(0, 250);
+
+  // Auto-compra directa
+  if (!CFG.autoComprar || !botActivo || circuitBreaker) return;
+  if (cashDisponible() < CFG.stake) return;
+  const candidatos = screenerUS.filter(c => c.slug &&
+    !posicionesAbiertas.find(p => p.marketId === c.marketId || p.slug === c.slug));
+  let compradas = 0;
+  for (const c of candidatos.slice(0, 5)) {   // máx 5 por ciclo (se reparte en el tiempo)
+    if (posicionesAbiertas.length >= maxPos()) break;
+    if (cashDisponible() < CFG.stake) break;
+    const t = await ejecutarTrade(c, CFG.stake, "📈 SCREENER");
+    senalesPendientes = senalesPendientes.filter(s => s.marketId !== c.marketId);
+    if (t) compradas++;
+    await sleep(700);
+  }
+  if (compradas > 0) console.log(`📈 Screener auto-compra: ${compradas} favoritos de hoy/mañana`);
+};
+
 // ── STATS REALES: P&L / Win Rate / Trades desde resoluciones de Polymarket ──────────
 let statsReales = { trades:0, ganados:0, perdidos:0, winRate:0, pnl:0, pnlHoy:0, tradesHoy:0, listo:false };
 const num = v => parseFloat(v?.value ?? v ?? 0) || 0;
@@ -685,12 +749,14 @@ cargarHistorialBalance().then(data => {
   return actualizarBalanceReal();
 }).then(() => sincronizarPosiciones())
   .then(() => actualizarStatsReales())
-  .then(() => construirIndiceUS())   // índice del venue de ejecución (para el puente seguro)
+  .then(() => escanearUS())          // catálogo .us: gemelos de consenso + screener
   .then(() => fetchTopTraders().then(t => { tradersCache = t; }))
-  .then(() => setTimeout(detectarConsensus, 4000));
+  .then(() => setTimeout(detectarConsensus, 4000))
+  .then(() => setTimeout(procesarScreener, 8000));
 
-setInterval(construirIndiceUS,    10 * 60 * 1000);   // refrescar índice US cada 10 min
+setInterval(escanearUS,           10 * 60 * 1000);   // refrescar catálogo .us cada 10 min
 setInterval(detectarConsensus,         90 * 1000);   // consenso cada 90s
+setInterval(procesarScreener,      2 * 60 * 1000);   // screener: feed + auto-compra cada 2 min
 setInterval(actualizarBalanceReal,    30 * 1000);   // balance cada 30s
 setInterval(sincronizarPosiciones,    60 * 1000);   // re-sync posiciones cada 1 min
 setInterval(actualizarStatsReales, 2 * 60 * 1000);   // stats reales cada 2 min
@@ -773,9 +839,9 @@ app.get("/api/status", (req, res) => {
     tradersCopiados:tradersCache.length,
     posicionesAbiertas:posicionesAbiertas.length,
     posicionesCopy:posicionesAbiertas.filter(p=>(p.fuerza||"").includes("CONSENSO")).length,
-    autoComprar:CFG.autoComprar, autoConsensus:CFG.autoConsensus, reinvertir:CFG.reinvertir,
+    autoComprar:CFG.autoComprar, autoConsensus:CFG.autoConsensus, autoScreener:CFG.autoScreener, reinvertir:CFG.reinvertir,
     minOverlap:CFG.minOverlap, topTradersCount:CFG.topTradersCount,
-    consensosDetectados:consensosActivos.length,
+    consensosDetectados:consensosActivos.length, screenerDetectados:screenerUS.length,
     maxPositiones:maxPos(), maxHoldHoras:CFG.maxHoldHoras, maxDiasRestantes:CFG.maxDiasRestantes,
   });
 });
@@ -1014,7 +1080,7 @@ app.post("/api/mis-posiciones/cerrar", async (req, res) => {
 app.post("/api/bot/pausar",        (req, res) => { botActivo=false; res.json({ botActivo }); });
 app.post("/api/bot/reanudar",      (req, res) => { botActivo=true;  res.json({ botActivo }); });
 app.post("/api/bot/reset-circuit", (req, res) => { circuitBreaker=false; rachaPerder=0; ultimaPerdidaMs=0; res.json({ success:true }); });
-app.post("/api/bot/scan-ahora",    async (req,res) => { await detectarConsensus(); res.json({ consensos:consensosActivos.length }); });
+app.post("/api/bot/scan-ahora",    async (req,res) => { await escanearUS(); await detectarConsensus(); await procesarScreener(); res.json({ consensos:consensosActivos.length, screener:screenerUS.length }); });
 
 // El COPY individual ya no existe (sistema viejo eliminado): toggle inocuo para no romper la UI
 app.post("/api/traders/:w/toggle", (req, res) => res.json({ success:true, copiando:true, nota:"Consenso usa el leaderboard automáticamente" }));
@@ -1027,6 +1093,7 @@ app.post("/api/config", (req, res) => {
   if (maxOdds     !==undefined) CFG.maxOdds    =parseFloat(maxOdds);
   if (autoComprar !==undefined) CFG.autoComprar=!!autoComprar;
   if (req.body.autoConsensus    !==undefined) CFG.autoConsensus    =!!req.body.autoConsensus;
+  if (req.body.autoScreener     !==undefined) CFG.autoScreener     =!!req.body.autoScreener;
   if (req.body.minOverlap       !==undefined) CFG.minOverlap       =Math.max(2, parseInt(req.body.minOverlap));
   if (req.body.topTradersCount  !==undefined) CFG.topTradersCount  =Math.max(5, parseInt(req.body.topTradersCount));
   if (req.body.maxHoldHoras     !==undefined) CFG.maxHoldHoras     =parseInt(req.body.maxHoldHoras);
@@ -1040,6 +1107,6 @@ const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => {
   console.log(`\n🐋 POLYBOT — SISTEMA DE CONSENSO — http://localhost:${PORT}`);
   console.log(`💰 Budget: $${CFG.budget} | Stake: $${CFG.stake} | Odds: ${(CFG.minOdds*100).toFixed(0)}%-${(CFG.maxOdds*100).toFixed(0)}%`);
-  console.log(`🐋 Consenso: ≥${CFG.minOverlap} de ${CFG.topTradersCount} top-traders | Auto-compra: ${CFG.autoComprar?"ON (gemelo US verificado)":"OFF"}`);
-  console.log(`🔑 API: ${CFG.keyId?"✅ REAL":"❌ SIM"}\n`);
+  console.log(`🐋 Consenso: ≥${CFG.minOverlap} de ${CFG.topTradersCount} top-traders (gemelo US + fecha) | 📈 Screener .us: ${CFG.autoScreener?"ON":"OFF"}`);
+  console.log(`🤖 Auto-compra: ${CFG.autoComprar?"ON":"OFF"} | 🔑 API: ${CFG.keyId?"✅ REAL":"❌ SIM"}\n`);
 });
