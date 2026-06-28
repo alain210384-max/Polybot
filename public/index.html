@@ -60,6 +60,10 @@
     .mobile-section { display: none; }
     .mobile-section.active { display: block; animation: fadeIn 0.2s ease; }
   }
+  /* En escritorio, ocultar las secciones SOLO-móvil (duplican col-left y col-right) */
+  @media (min-width: 769px) {
+    #seccionTraders, #seccionBot { display: none !important; }
+  }
 
   .toggle-switch { width: 44px; height: 24px; border-radius: 12px; position: relative; cursor: pointer; transition: background 0.2s; }
   .toggle-knob { width: 18px; height: 18px; background: #fff; border-radius: 50%; position: absolute; top: 3px; transition: left 0.2s; }
