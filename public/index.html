@@ -309,16 +309,30 @@
           </div>
           <span id="unrealPnl" class="mono" style="font-size:14px;font-weight:700;color:#9D5CF6">$0.00</span>
         </div>
-        <div style="font-size:10px;color:#64748B;margin-bottom:8px">Lo que abrió el bot (Screener + Consenso)</div>
-        <!-- DESGLOSE POR SISTEMA -->
+        <div style="font-size:10px;color:#64748B;margin-bottom:8px">📈 Favoritos del Screener (volumen diario, $1) — el consenso va en su propia tabla ↓</div>
+        <!-- DESGLOSE POR SISTEMA (sin consenso, que tiene su sección) -->
         <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
           <span style="background:#3B82F622;color:#3B82F6;font-size:11px;padding:3px 10px;border-radius:8px;font-weight:700">📈 Screener: <span id="cntScreener">0</span></span>
-          <span style="background:#9D5CF622;color:#9D5CF6;font-size:11px;padding:3px 10px;border-radius:8px;font-weight:700">🐋 Consenso: <span id="cntConsenso">0</span></span>
           <span style="background:#F59E0B22;color:#F59E0B;font-size:11px;padding:3px 10px;border-radius:8px;font-weight:700">✋ Manual: <span id="cntManual">0</span></span>
           <span id="chipPrevias" style="background:#64748B22;color:#94A3B8;font-size:11px;padding:3px 10px;border-radius:8px;font-weight:700;display:none">🔗 Previas: <span id="cntPrevias">0</span></span>
         </div>
         <div id="posicionesList" style="max-height:280px;overflow-y:auto">
           <div style="text-align:center;color:#64748B;padding:30px">Sin posiciones abiertas</div>
+        </div>
+      </div>
+
+      <!-- POSICIONES DE CONSENSO (fila aparte) -->
+      <div class="card" style="margin-bottom:16px;border:1px solid #9D5CF655">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:14px;font-weight:700">🐋 Posiciones de Consenso</span>
+            <span id="badgeConsensoPos" style="background:#9D5CF633;color:#9D5CF6;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:700">0</span>
+          </div>
+          <span id="unrealPnlConsenso" class="mono" style="font-size:14px;font-weight:700;color:#9D5CF6">$0.00</span>
+        </div>
+        <div style="font-size:10px;color:#64748B;margin-bottom:12px">🐋 Tu señal de calidad: smart money ($5/trade), el edge real</div>
+        <div id="consensoPosList" style="max-height:280px;overflow-y:auto">
+          <div style="text-align:center;color:#64748B;padding:24px">Sin posiciones de consenso (0)</div>
         </div>
       </div>
 
@@ -797,25 +811,35 @@ async function fetchPosiciones() {
   try {
     const r = await fetch(`${API}/trades/open`);
     const pos = await r.json();
-    const unrealized = pos.reduce((s, t) => s + (t.pnl || 0), 0);
-    if (document.getElementById("unrealPnl"))
-      document.getElementById("unrealPnl").textContent = `${signPN(unrealized)}$${fmt(Math.abs(unrealized))}`;
-    if (document.getElementById("badgePosiciones"))
-      document.getElementById("badgePosiciones").textContent = pos.length;
+    // Separar consenso del resto
+    const esCon = t => String(t.fuerza||"").includes("CONSENSO");
+    const consenso = pos.filter(esCon);
+    const resto    = pos.filter(t => !esCon(t));
 
-    // Desglose por sistema (Consenso siempre visible, 0 si no hay)
-    const cuenta = f => pos.filter(t => String(t.fuerza||"").includes(f)).length;
-    const nScr = cuenta("SCREENER"), nCon = cuenta("CONSENSO"), nMan = cuenta("MANUAL");
-    const nPrev = pos.length - nScr - nCon - nMan;
     const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-    setTxt("cntScreener", nScr); setTxt("cntConsenso", nCon); setTxt("cntManual", nMan); setTxt("cntPrevias", nPrev);
+
+    // ── Posiciones del Bot (sin consenso) ──
+    const unreal = resto.reduce((s, t) => s + (t.pnl || 0), 0);
+    setTxt("unrealPnl", `${signPN(unreal)}$${fmt(Math.abs(unreal))}`);
+    setTxt("badgePosiciones", resto.length);
+    const cuenta = f => resto.filter(t => String(t.fuerza||"").includes(f)).length;
+    const nScr = cuenta("SCREENER"), nMan = cuenta("MANUAL");
+    const nPrev = resto.length - nScr - nMan;
+    setTxt("cntScreener", nScr); setTxt("cntManual", nMan); setTxt("cntPrevias", nPrev);
     const chipPrev = document.getElementById("chipPrevias");
     if (chipPrev) chipPrev.style.display = nPrev > 0 ? "inline-block" : "none";
+    document.getElementById("posicionesList").innerHTML = resto.length === 0
+      ? `<div style="text-align:center;color:#64748B;padding:30px">Sin posiciones del screener</div>`
+      : resto.map(t => renderPosicion(t)).join("");
 
-    const html = pos.length === 0
-      ? `<div style="text-align:center;color:#64748B;padding:30px">Sin posiciones abiertas</div>`
-      : pos.map(t => renderPosicion(t)).join("");
-    document.getElementById("posicionesList").innerHTML = html;
+    // ── Posiciones de Consenso (fila aparte) ──
+    const unrealCon = consenso.reduce((s, t) => s + (t.pnl || 0), 0);
+    setTxt("unrealPnlConsenso", `${signPN(unrealCon)}$${fmt(Math.abs(unrealCon))}`);
+    setTxt("badgeConsensoPos", consenso.length);
+    const elCon = document.getElementById("consensoPosList");
+    if (elCon) elCon.innerHTML = consenso.length === 0
+      ? `<div style="text-align:center;color:#64748B;padding:24px">Sin posiciones de consenso (0)</div>`
+      : consenso.map(t => renderPosicion(t)).join("");
   } catch(e) {}
 }
 
