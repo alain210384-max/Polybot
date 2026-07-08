@@ -39,6 +39,9 @@ const CFG_DEFAULTS = {
   autoScreener:     true,   // Screener nativo .us de favoritos que cierran hoy/mañana
   stakeConsenso:    5,      // $ por trade de CONSENSO (el screener usa CFG.stake)
   reservaConsensoPct: 0.20, // % del balance reservado solo para consenso (screener no lo toca)
+  // ── Value betting (vs sportsbooks) ──
+  valueEdgeMin:     0.04,   // edge mínimo (prob sportsbook − precio .us) para marcar value bet
+  autoValue:        false,  // SOLO SEÑAL por ahora (validar el edge antes de arriesgar dinero)
 };
 let CFG = (() => {
   try {
@@ -83,6 +86,13 @@ const fechaDeSlug = slug => {
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const prom  = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0;
+
+// ── VALUE BETTING (comparación vs casas de apuestas) ──────────────────────────────
+const ODDS_API_KEY = process.env.ODDS_API_KEY || "";
+const ODDS_API     = "https://api.the-odds-api.com/v4";
+// Deportes a consultar (configurable por env; default: los activos ahora). Cada uno = 1 crédito/refresh.
+const SPORTS_ODDS  = (process.env.ODDS_SPORTS || "baseball_mlb,basketball_nba,icehockey_nhl,soccer_fifa_world_cup")
+  .split(",").map(s => s.trim()).filter(Boolean);
 
 const GAMMA_API = "https://gamma-api.polymarket.com";
 const DATA_API  = "https://data-api.polymarket.com";
@@ -441,6 +451,8 @@ const ejecutarTrade = async (mercado, stake, fuerza, saltaBreaker = false) => {
 // ════════════════════════════════════════════════════════════════════════════════
 let indiceUS = [];    // [{slug, team, price, q, endMs, fecha}] — gemelos para el puente de consenso
 let screenerUS = [];  // favoritos nativos .us que cierran hoy/mañana en rango de odds
+let sbProbs   = {};   // "equipoNorm|fecha" -> { prob, game, commence } (prob implícita sin vig de sportsbooks)
+let valueBets = [];   // value bets detectados (.us más barato que la prob real)
 const PRICE_TOL = 0.05;  // tolerancia de acuerdo de precio entre venues
 const fechaTexto = s => { const m=(s||"").match(/(\d{4}-\d{2}-\d{2})/); return m?m[1]:null; };
 
@@ -765,6 +777,90 @@ const procesarScreener = async () => {
   if (compradas > 0) console.log(`📈 Screener auto-compra: ${compradas} favoritos de hoy/mañana`);
 };
 
+// ════════════════════════════════════════════════════════════════════════════════
+//  VALUE BETTING — comparar polymarket.us vs consenso de casas de apuestas
+//  Edge REAL: comprar SOLO cuando .us está más barato que la probabilidad verdadera
+//  (línea de sportsbooks sin vig). Es el método de swisstony. Por ahora SOLO SEÑAL.
+// ════════════════════════════════════════════════════════════════════════════════
+const fechaISOaDia = iso => { try { return new Date(iso).toISOString().slice(0,10); } catch(_) { return null; } };
+
+// Baja odds h2h de sportsbooks y calcula prob implícita SIN vig, promediada entre casas.
+const fetchSportsbookOdds = async () => {
+  if (!ODDS_API_KEY) return;
+  const map = {};
+  let creditos = 0;
+  for (const sport of SPORTS_ODDS) {
+    try {
+      const r = await axios.get(`${ODDS_API}/sports/${sport}/odds`, {
+        params: { apiKey: ODDS_API_KEY, regions: "us", markets: "h2h", oddsFormat: "decimal" },
+        timeout: 12000,
+      });
+      creditos++;
+      for (const g of (r.data || [])) {
+        const dia = fechaISOaDia(g.commence_time);
+        // Por cada casa: prob implícita = 1/decimal, normalizada (quita el vig)
+        const acumulado = {};  // outcomeName -> [probSinVig]
+        for (const bk of (g.bookmakers || [])) {
+          const h2h = (bk.markets || []).find(m => m.key === "h2h");
+          if (!h2h || !(h2h.outcomes || []).length) continue;
+          const invs = h2h.outcomes.map(o => 1 / (parseFloat(o.price) || 999));
+          const suma = invs.reduce((a,b) => a+b, 0) || 1;
+          h2h.outcomes.forEach((o, i) => {
+            const p = invs[i] / suma;  // sin vig
+            (acumulado[o.name] = acumulado[o.name] || []).push(p);
+          });
+        }
+        for (const [name, arr] of Object.entries(acumulado)) {
+          const prob = arr.reduce((a,b) => a+b, 0) / arr.length;  // consenso entre casas
+          const key = `${normTeam(name)}|${dia}`;
+          if (normTeam(name)) map[key] = { prob, game: `${g.away_team} @ ${g.home_team}`, commence: g.commence_time, libros: arr.length };
+        }
+      }
+      await sleep(300);
+    } catch(e) { console.log(`⚠️ Odds ${sport}:`, e.response?.status || e.message); }
+  }
+  sbProbs = map;
+  console.log(`💎 Sportsbooks: ${Object.keys(map).length} equipos con prob real (${creditos} créditos usados)`);
+};
+
+// Cruza el catálogo .us contra las probs de sportsbooks → value bets (edge = probReal − precio.us)
+const detectarValue = () => {
+  if (!Object.keys(sbProbs).length || !indiceUS.length) { valueBets = []; return; }
+  const bets = [];
+  const vistos = new Set();
+  for (const m of indiceUS) {
+    if (!m.team || !m.fecha) continue;
+    const sb = sbProbs[`${m.team}|${m.fecha}`];
+    if (!sb) continue;
+    const edge = sb.prob - m.price;                    // + = .us más barato que la prob real
+    if (edge < CFG.valueEdgeMin) continue;
+    if (m.price < 0.40 || m.price > 0.92) continue;    // evita extremos (poca liquidez / poco pago)
+    if (vistos.has(m.slug)) continue; vistos.add(m.slug);
+    bets.push({
+      id: idParaMercado(m.slug), marketId: m.slug, slug: m.slug,
+      titulo: m.q || m.slug, categoria: mapCategoria([], m.q || "", m.slug),
+      prob: parseFloat(m.price.toFixed(4)),
+      probReal: parseFloat(sb.prob.toFixed(4)),
+      edge: parseFloat(edge.toFixed(4)),
+      endMs: m.endMs, tradersCount: 0, fuerza: "💎 VALUE", stake: CFG.stake,
+    });
+  }
+  bets.sort((a,b) => b.edge - a.edge);
+  valueBets = bets.slice(0, 60);
+  // Feed al dashboard (SOLO señal — no compra)
+  const nuevas = valueBets.filter(v => v.slug &&
+    !senalesPendientes.find(s => s.marketId === v.marketId) &&
+    !posicionesAbiertas.find(p => p.marketId === v.marketId || p.slug === v.slug));
+  if (nuevas.length) senalesPendientes = [...nuevas, ...senalesPendientes].slice(0, 250);
+  console.log(`💎 Value bets: ${valueBets.length} (edge ≥ ${(CFG.valueEdgeMin*100).toFixed(0)}%)${valueBets[0] ? ` · mejor: +${(valueBets[0].edge*100).toFixed(1)}% ${valueBets[0].titulo.slice(0,32)}` : ""}`);
+};
+
+const cicloValue = async () => {
+  if (!ODDS_API_KEY) return;
+  await fetchSportsbookOdds();
+  detectarValue();
+};
+
 // ── STATS REALES: P&L / Win Rate / Trades desde resoluciones de Polymarket ──────────
 let statsReales = { trades:0, ganados:0, perdidos:0, winRate:0, pnl:0, pnlHoy:0, tradesHoy:0, listo:false };
 const num = v => parseFloat(v?.value ?? v ?? 0) || 0;
@@ -809,11 +905,14 @@ cargarHistorialBalance().then(data => {
   .then(() => escanearUS())          // catálogo .us: gemelos de consenso + screener
   .then(() => fetchTopTraders().then(t => { tradersCache = t; }))
   .then(() => setTimeout(detectarConsensus, 4000))
-  .then(() => setTimeout(procesarScreener, 8000));
+  .then(() => setTimeout(procesarScreener, 8000))
+  .then(() => setTimeout(cicloValue, 12000));        // value betting vs sportsbooks (si hay ODDS_API_KEY)
 
+const VALUE_REFRESH_MS = (parseInt(process.env.ODDS_REFRESH_MIN) || 360) * 60 * 1000;  // 6h por defecto (tier gratis)
 setInterval(escanearUS,           10 * 60 * 1000);   // refrescar catálogo .us cada 10 min
 setInterval(detectarConsensus,         90 * 1000);   // consenso cada 90s
 setInterval(procesarScreener,      2 * 60 * 1000);   // screener: feed + auto-compra cada 2 min
+setInterval(cicloValue,             VALUE_REFRESH_MS); // value betting (odds sportsbooks) cada ~6h
 setInterval(actualizarBalanceReal,    30 * 1000);   // balance cada 30s
 setInterval(sincronizarPosiciones,    60 * 1000);   // re-sync posiciones cada 1 min
 setInterval(actualizarStatsReales, 2 * 60 * 1000);   // stats reales cada 2 min
@@ -900,12 +999,14 @@ app.get("/api/status", (req, res) => {
     minOverlap:CFG.minOverlap, topTradersCount:CFG.topTradersCount,
     consensosDetectados:consensosActivos.length, screenerDetectados:screenerUS.length,
     stakeConsenso:CFG.stakeConsenso, reservaConsensoPct:CFG.reservaConsensoPct, reservaConsenso:parseFloat(reservaConsenso().toFixed(2)), cashScreener:parseFloat(cashParaScreener().toFixed(2)),
+    valueBets:valueBets.length, valueEdgeMin:CFG.valueEdgeMin, autoValue:CFG.autoValue, oddsApiOk:!!ODDS_API_KEY, sbEquipos:Object.keys(sbProbs).length,
     maxPositiones:maxPos(), maxHoldHoras:CFG.maxHoldHoras, maxDiasRestantes:CFG.maxDiasRestantes,
   });
 });
 
 app.get("/api/markets",         (req, res) => res.json(consensosActivos.slice(0,100)));
 app.get("/api/consensus",       (req, res) => res.json(consensosActivos.slice(0,60)));
+app.get("/api/value",           (req, res) => res.json(valueBets.slice(0,60)));
 app.get("/api/signals/pending", (req, res) => res.json(senalesPendientes.slice(0,50)));
 app.get("/api/trades/open",     (req, res) => res.json(posicionesAbiertas));
 
@@ -1139,7 +1240,7 @@ app.post("/api/mis-posiciones/cerrar", async (req, res) => {
 app.post("/api/bot/pausar",        (req, res) => { botActivo=false; res.json({ botActivo }); });
 app.post("/api/bot/reanudar",      (req, res) => { botActivo=true;  res.json({ botActivo }); });
 app.post("/api/bot/reset-circuit", (req, res) => { circuitBreaker=false; rachaPerder=0; ultimaPerdidaMs=0; res.json({ success:true }); });
-app.post("/api/bot/scan-ahora",    async (req,res) => { await escanearUS(); await detectarConsensus(); await procesarScreener(); res.json({ consensos:consensosActivos.length, screener:screenerUS.length }); });
+app.post("/api/bot/scan-ahora",    async (req,res) => { await escanearUS(); await detectarConsensus(); await procesarScreener(); await cicloValue(); res.json({ consensos:consensosActivos.length, screener:screenerUS.length, value:valueBets.length }); });
 
 // El COPY individual ya no existe (sistema viejo eliminado): toggle inocuo para no romper la UI
 app.post("/api/traders/:w/toggle", (req, res) => res.json({ success:true, copiando:true, nota:"Consenso usa el leaderboard automáticamente" }));
@@ -1155,6 +1256,8 @@ app.post("/api/config", (req, res) => {
   if (req.body.autoScreener     !==undefined) CFG.autoScreener     =!!req.body.autoScreener;
   if (req.body.stakeConsenso    !==undefined) CFG.stakeConsenso    =Math.max(1, parseFloat(req.body.stakeConsenso));
   if (req.body.reservaConsensoPct!==undefined) CFG.reservaConsensoPct=Math.max(0, Math.min(0.8, parseFloat(req.body.reservaConsensoPct)));
+  if (req.body.valueEdgeMin     !==undefined) CFG.valueEdgeMin     =Math.max(0.01, Math.min(0.5, parseFloat(req.body.valueEdgeMin)));
+  if (req.body.autoValue        !==undefined) CFG.autoValue        =!!req.body.autoValue;
   if (req.body.minOverlap       !==undefined) CFG.minOverlap       =Math.max(2, parseInt(req.body.minOverlap));
   if (req.body.topTradersCount  !==undefined) CFG.topTradersCount  =Math.max(5, parseInt(req.body.topTradersCount));
   if (req.body.maxHoldHoras     !==undefined) CFG.maxHoldHoras     =parseInt(req.body.maxHoldHoras);
@@ -1168,6 +1271,7 @@ const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => {
   console.log(`\n🐋 POLYBOT — SISTEMA DE CONSENSO — http://localhost:${PORT}`);
   console.log(`💰 Budget: $${CFG.budget} | Stake: $${CFG.stake} | Odds: ${(CFG.minOdds*100).toFixed(0)}%-${(CFG.maxOdds*100).toFixed(0)}%`);
-  console.log(`🐋 Consenso: ≥${CFG.minOverlap} de ${CFG.topTradersCount} top-traders (gemelo US + fecha) | 📈 Screener .us: ${CFG.autoScreener?"ON":"OFF"}`);
+  console.log(`🐋 Consenso: ≥${CFG.minOverlap} de ${CFG.topTradersCount} top-traders | 📈 Screener .us: ${CFG.autoScreener?"ON":"OFF"}`);
+  console.log(`💎 Value betting vs sportsbooks: ${ODDS_API_KEY?`ON (${SPORTS_ODDS.length} deportes, solo señal)`:"OFF (falta ODDS_API_KEY)"}`);
   console.log(`🤖 Auto-compra: ${CFG.autoComprar?"ON":"OFF"} | 🔑 API: ${CFG.keyId?"✅ REAL":"❌ SIM"}\n`);
 });

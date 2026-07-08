@@ -733,7 +733,8 @@ async function fetchSenales() {
 function fuenteChip(fuerza, tradersCount) {
   const f = String(fuerza || "");
   let txt, col;
-  if (f.includes("SCREENER"))                          { txt = "📈 SCREENER"; col = "#3B82F6"; }
+  if (f.includes("VALUE"))                             { txt = "💎 VALUE";    col = "#00D97E"; }
+  else if (f.includes("SCREENER"))                     { txt = "📈 SCREENER"; col = "#3B82F6"; }
   else if (f.includes("CONSENSO") || tradersCount > 0) { txt = "🐋 CONSENSO"; col = "#9D5CF6"; }
   else if (f.includes("MANUAL"))                       { txt = "✋ MANUAL";   col = "#F59E0B"; }
   else                                                  { txt = "🔗 SYNC";     col = "#64748B"; }
@@ -757,11 +758,12 @@ function renderSenal(s) {
       <div style="flex:1;margin-right:10px">
         ${fuenteChip(s.fuerza, s.tradersCount)}
         <span class="cat-badge" style="background:${cc}22;color:${cc}">${s.categoria}</span>
-        ${String(s.fuerza||"").includes("SCREENER") ? "" : `<span class="strength-badge" style="background:${fColor}22;color:${fColor};margin-left:6px">${enVivo ? "🔴 EN VIVO" : fuerza}</span>`}
+        ${/SCREENER|VALUE/.test(String(s.fuerza||"")) ? "" : `<span class="strength-badge" style="background:${fColor}22;color:${fColor};margin-left:6px">${enVivo ? "🔴 EN VIVO" : fuerza}</span>`}
         <div style="font-size:14px;font-weight:600;color:#E2E8F0;margin-top:6px;line-height:1.3">${esc(s.titulo)}</div>
       </div>
       <div style="text-align:right;flex-shrink:0">
         <div class="mono" style="font-size:24px;font-weight:900;color:${prob>=75?"#00D97E":"#F59E0B"}">${prob}%</div>
+        ${s.edge != null ? `<div class="mono" style="font-size:12px;color:#00D97E;font-weight:800;margin-top:2px">💎 +${(s.edge*100).toFixed(1)}%</div><div style="font-size:9px;color:#64748B">casas: ${Math.round((s.probReal||0)*100)}%</div>` : ""}
       </div>
     </div>
     <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
