@@ -824,12 +824,18 @@ const fetchSportsbookOdds = async () => {
 };
 
 // Cruza el catálogo .us contra las probs de sportsbooks → value bets (edge = probReal − precio.us)
+// SOLO moneyline: la prob de las casas (h2h) es "gana el partido". Comparar contra
+// spreads/totales/props sería mezclar peras con manzanas → edges FALSOS. Excluir esos.
+const esMoneylineUS = q => /^will .+\bwin\b/i.test(q||"") &&
+  !/spread|cover|over|under|\bo\/u\b|total|goals|corners|shots|score|record|by \d|[-+]\d/i.test(q||"");
+
 const detectarValue = () => {
   if (!Object.keys(sbProbs).length || !indiceUS.length) { valueBets = []; return; }
   const bets = [];
   const vistos = new Set();
   for (const m of indiceUS) {
     if (!m.team || !m.fecha) continue;
+    if (!esMoneylineUS(m.q)) continue;   // solo "equipo gana el partido"
     const sb = sbProbs[`${m.team}|${m.fecha}`];
     if (!sb) continue;
     const edge = sb.prob - m.price;                    // + = .us más barato que la prob real
