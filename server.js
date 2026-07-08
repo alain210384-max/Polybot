@@ -88,7 +88,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const prom  = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0;
 
 // ── VALUE BETTING (comparación vs casas de apuestas) ──────────────────────────────
-const ODDS_API_KEY = process.env.ODDS_API_KEY || "";
+const ODDS_API_KEY = process.env.ODDS_API_KEY || "38f33b80c3b2dfbd8a3a8bc3392b18b4";  // free tier 500/mes; regenerable en the-odds-api.com
 const ODDS_API     = "https://api.the-odds-api.com/v4";
 // Deportes a consultar (configurable por env; default: los activos ahora). Cada uno = 1 crédito/refresh.
 const SPORTS_ODDS  = (process.env.ODDS_SPORTS || "baseball_mlb,basketball_nba,icehockey_nhl,soccer_fifa_world_cup")
